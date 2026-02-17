@@ -1,2 +1,8 @@
 ipykernel
 dotenv
+langchain
+langchain-experimental
+langchain_ollama
+pyvis
+langchain-neo4j
+neo4j
