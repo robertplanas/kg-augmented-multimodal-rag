@@ -14,12 +14,23 @@ import logging
 LOGGER = logging.getLogger(__name__)
 
 
+def flatten_metadata(metadata_dict):
+    """
+    Converts nested lists/dicts into JSON strings so Vector DBs can accept them.
+    """
+    flattened = {}
+    for key, value in metadata_dict.items():
+        if isinstance(value, (dict, list)):
+            # Turn the complex list/dict into a JSON string
+            flattened[key] = json.dumps(value)
+        else:
+            flattened[key] = value
+    return flattened
+
+
 def add_to_retriever(
     retriever, id_key, objects, attr_name, type_val
 ):  # renamed 'type' to avoid shadowing
-    payloads = [getattr(obj, attr_name) for obj in objects]
-
-    ids = [generate_id(p) for p in payloads]
 
     existing_keys = set(retriever.docstore.yield_keys())
 
@@ -28,18 +39,35 @@ def add_to_retriever(
     new_ids = []
 
     for i, obj in enumerate(objects):
-        if ids[i] not in existing_keys:
-            new_ids.append(ids[i])
+        content = getattr(obj, attr_name)
+        metadata = getattr(obj, "metadata", {})
+        flattened_metadata = flatten_metadata(metadata)
+        id = generate_id(
+            getattr(obj, attr_name),
+            metadata.get("filename", "unknown"),
+        )
+
+        if id not in existing_keys:
+            new_ids.append(id)
 
             # 1. The Summary Document (for Vector Store)
             new_summaries.append(
                 Document(
                     page_content=obj.description,
-                    metadata={id_key: ids[i], "type": type_val},
+                    metadata={
+                        id_key: id,
+                        "type": type_val,
+                        "metadata": json.dumps(metadata),
+                    },
                 )
             )
 
-            record = {"content": payloads[i], "type": type_val}
+            # 2. The Wrapped Document (for Doc Store)
+            record = {
+                "content": content,
+                "type": type_val,
+                "metadata": json.dumps(metadata),
+            }
             new_store_records.append(json.dumps(record).encode("utf-8"))
 
     if new_summaries:
@@ -55,9 +83,7 @@ def add_to_retriever(
 
 def generate_id(filename: str, content: str):
     """Generates a unique, stable hex ID based on content and context."""
-    return hashlib.sha256(
-        filename.encode("utf-8") + "_" + content.encode("utf-8")
-    ).hexdigest()
+    return hashlib.sha256((filename + "_" + content).encode("utf-8")).hexdigest()
 
 
 def generate_database_and_retriever(
