@@ -6,3 +6,7 @@ langchain_ollama
 pyvis
 langchain-neo4j
 neo4j
+docling
+imagehash
+chromadb
+langchain_chroma

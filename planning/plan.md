@@ -66,5 +66,3 @@ The following markdown summarizes the complete step-by-step plan:
 * **LLM/Embeddings:** **Ollama** (Local, fast, and handles VLMs for your images).
 * **Graph:** **Neo4j Community Edition** (Local via Docker).
 * **Logic:** `NetworkX` for the initial math/clustering before pushing to Neo4j.
-
-**Would you like me to write a Cypher query template you can use to push your extracted Python triplets into Neo4j?**
