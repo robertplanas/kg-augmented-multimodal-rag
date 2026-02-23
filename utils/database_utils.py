@@ -18,6 +18,7 @@ def add_to_retriever(
     retriever, id_key, objects, attr_name, type_val
 ):  # renamed 'type' to avoid shadowing
     payloads = [getattr(obj, attr_name) for obj in objects]
+
     ids = [generate_id(p) for p in payloads]
 
     existing_keys = set(retriever.docstore.yield_keys())
@@ -52,9 +53,11 @@ def add_to_retriever(
         LOGGER.info(f"No new items to add for {attr_name}.")
 
 
-def generate_id(content: str):
-    """Generates a deterministic SHA-256 hash for given content."""
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+def generate_id(filename: str, content: str):
+    """Generates a unique, stable hex ID based on content and context."""
+    return hashlib.sha256(
+        filename.encode("utf-8") + "_" + content.encode("utf-8")
+    ).hexdigest()
 
 
 def generate_database_and_retriever(
