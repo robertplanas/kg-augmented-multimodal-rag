@@ -4,7 +4,7 @@ import logging
 LOGGER = logging.getLogger(__name__)
 
 
-def summarize_objects(texts, images, tables, model_name):
+def summarize_objects(texts, images, tables, model_name="gemma3:12b"):
     if len(texts) > 0:
         LOGGER.info("Summarizing text chunks")
         for text_obj in tqdm.tqdm(texts):
