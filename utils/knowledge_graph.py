@@ -97,6 +97,8 @@ def chain_for_tables(model_name="gemma3:12b", temperature=0):
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", system_instruction),
+            ("human", "Background Context for the following table: {context}"),
+            ("human", "Table Description: {description}"),
             (
                 "human",
                 "Extract all relationships from the following table data. "
@@ -115,25 +117,31 @@ def chain_for_images(model_name="gemma3:12b", temperature=0):
     parser = PydanticOutputParser(pydantic_object=KnowledgeGraph)
 
     system_instruction = (
-        "You are an expert Computer Vision Engineer and Scene Graph Generator. "
-        "Your task is to decompose the provided image into a structured knowledge graph.\n\n"
-        "IMAGE ANALYSIS RULES:\n"
-        "1. **Object Detection**: Every distinct object or person should be a 'Head' or 'Tail'. "
-        "Use specific labels (e.g., 'Golden Retriever' instead of 'Dog').\n"
-        "2. **Spatial Relationships**: Capture the physical layout using predicates like "
-        "LEFT_OF, BEHIND, MOUNTED_ON, or INSIDE.\n"
-        "3. **Action & Interaction**: Identify verbs between entities, such as "
-        "WEARING, CARRYING, EATING, or LOOKING_AT.\n"
-        "4. **Attribute Attribution**: Treat significant visual properties as relationships "
-        "(e.g., Head: 'Shirt', Relation: 'HAS_COLOR', Tail: 'Crimson').\n"
-        "5. **Scene Context**: If the image is a specific setting (e.g., a Kitchen), "
-        "relate the main objects to that setting.\n\n"
+        "You are an expert Knowledge Graph Engineer and Technical Systems Analyst. "
+        "Your task is to decompose the provided technical image into a structured knowledge graph.\n\n"
+        "TECHNICAL IMAGE ANALYSIS RULES:\n"
+        "1. **Entity Identification**: Identify all nodes, blocks, icons, or text elements as entities. "
+        "Include abstract concepts (e.g., 'Neural Network') and specific components (e.g., 'ReLU Layer'). "
+        "Use precise nomenclature found in the image.\n"
+        "2. **Functional Relationships**: Identify connections between entities. Instead of physical "
+        "space, focus on logical flow. Use predicates like 'INPUT_TO', 'DEPENDS_ON', 'REFINES', "
+        "'INHERITS_FROM', or 'STORES'.\n"
+        "3. **Directionality & Flow**: Treat arrows, lines, and connectors as directed edges. "
+        "The 'Head' is the source and the 'Tail' is the destination of the logical flow.\n"
+        "4. **Categorical Hierarchy**: Use 'PART_OF' or 'INSTANCE_OF' to represent elements contained "
+        "within a boundary box or grouping.\n"
+        "5. **Technical Attributes**: Map visual styling to metadata (e.g., Head: 'Database', "
+        "Relation: 'IS_ENCRYPTED', Tail: 'True') if represented by specific colors or dashed lines.\n"
+        "6. **Diagram Context**: Classify the diagram type (e.g., 'UML Diagram', 'Cloud Architecture', "
+        "'Decision Tree') and relate the root entities to this context.\n\n"
         "{format_instructions}"
     )
 
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", system_instruction),
+            ("human", "Background Context for the following image: {context}"),
+            ("human", "Image Description: {description}"),
             (
                 "human",
                 [
@@ -160,6 +168,8 @@ async def aextract_relationships_from_element(
 
     type_ = element.get("type", None)
     content = element.get("content", None)
+    description = element.get("description", None)
+    context = element.get("context", None)
     if content is None:
         LOGGER.warning("No content found for element: {}".format(element_id))
         return
@@ -174,7 +184,9 @@ async def aextract_relationships_from_element(
         )
         chain = chain_for_tables(model_name=model_name_table, temperature=temperature)
 
-        response = await chain.ainvoke({"input": content})
+        response = await chain.ainvoke(
+            {"input": content, "description": description, "context": context}
+        )
 
         LOGGER.info(
             "Extracting relationships from description of table element: {}".format(
@@ -189,7 +201,9 @@ async def aextract_relationships_from_element(
             "Extracting relationships from image element: {}".format(element_id)
         )
         chain = chain_for_images(model_name=model_name_image, temperature=temperature)
-        response = await chain.ainvoke({"input": content})
+        response = await chain.ainvoke(
+            {"input": content, "description": description, "context": context}
+        )
         return response.relationships
 
     elif type_ == "text":

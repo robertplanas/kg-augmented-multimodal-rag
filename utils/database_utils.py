@@ -41,7 +41,6 @@ def add_to_retriever(
     for i, obj in enumerate(objects):
         content = getattr(obj, attr_name)
         metadata = getattr(obj, "metadata", {})
-        flattened_metadata = flatten_metadata(metadata)
         id = generate_id(
             getattr(obj, attr_name),
             metadata.get("filename", "unknown"),
@@ -65,6 +64,9 @@ def add_to_retriever(
             # 2. The Wrapped Document (for Doc Store)
             record = {
                 "content": content,
+                "id": id,
+                "context": getattr(obj, "context", ""),
+                "description": getattr(obj, "description", ""),
                 "type": type_val,
                 "metadata": json.dumps(metadata),
             }
