@@ -250,8 +250,7 @@ async def convert_to_graph_elements_pipeline(
             # This task "holds" a spot until it returns
 
             doc = parse_document_to_dict(doc)
-
-            return await aextract_relationships_from_element(
+            relationship = await aextract_relationships_from_element(
                 doc,
                 doc_id,
                 model_name_text,
@@ -259,8 +258,7 @@ async def convert_to_graph_elements_pipeline(
                 model_name_image,
                 temperature,
             )
-
-    relationship_elements = []
+            return doc_id, relationship
 
     # Create tasks using the throttled wrapper
     tasks = [
@@ -268,7 +266,11 @@ async def convert_to_graph_elements_pipeline(
     ]
 
     # Gather results
-    relationship_elements = await tqdm_asyncio.gather(*tasks)
+    results = await tqdm_asyncio.gather(*tasks)
 
     # Filter out None values
-    return [el for el in relationship_elements if el is not None]
+    return {
+        doc_id: relationships
+        for doc_id, relationships in results
+        if relationships is not None
+    }
