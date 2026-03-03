@@ -1,0 +1,22 @@
+services:
+  neo4j:
+    image: neo4j:latest
+    container_name: neo4j_project
+    ports:
+      - "7474:7474" # HTTP (Browser)
+      - "7687:7687" # Bolt (Driver connection)
+    volumes:
+      - ./neo4j/data:/data
+      - ./neo4j/logs:/logs
+      - ./neo4j/import:/import
+      - ./neo4j/plugins:/plugins
+    environment:
+      - NEO4J_AUTH=neo4j/123456789
+      - NEO4J_server_memory_pagecache_size=512M
+      - NEO4J_server_memory_heap_max__size=1G
+      - NEO4J_PLUGINS=["apoc"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-proxy --quiet --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5

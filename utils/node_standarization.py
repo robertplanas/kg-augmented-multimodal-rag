@@ -162,5 +162,7 @@ def lemmatize_nodes_and_relationships(
 
                 setattr(relation, field, lemma_cache[original_val])
 
-    print(lemma_cache)
     return document_relationships
+
+
+def 

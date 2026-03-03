@@ -11,3 +11,5 @@ imagehash
 chromadb
 langchain_chroma
 tqdm
+nltk
+docker
