@@ -209,3 +209,6 @@ __marimo__/
 # Database 
 localdb/
 neo4j/
+
+# Do not upload pkl
+*.pkl
