@@ -13,8 +13,10 @@ services:
     environment:
       - NEO4J_AUTH=neo4j/123456789
       - NEO4J_server_memory_pagecache_size=512M
-      - NEO4J_server_memory_heap_max__size=1G
-      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_server_memory_heap_max__size=2G
+      - NEO4J_PLUGINS=["apoc", "graph-data-science"]
+      - NEO4J_dbms_security_procedures_unrestricted=gds.*,apoc.*
+      - NEO4J_dbms_security_procedures_allowlist=gds.*,apoc.*
     healthcheck:
       test: ["CMD-SHELL", "wget --no-proxy --quiet --tries=1 --spider http://localhost:7474 || exit 1"]
       interval: 10s

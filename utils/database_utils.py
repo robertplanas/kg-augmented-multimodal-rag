@@ -144,3 +144,59 @@ def populate_database(retriever, text_objs, images_obj, tables_obj):
 
     LOGGER.info("All data persisted to Local Database")
     return retriever
+
+
+def populate_community_database(
+    retriever,
+    communities,
+    level_type,  # e.g., "global" or "mid"
+    id_key="doc_id",
+):
+    """
+    Injisents KG community reports into the MultiVectorRetriever.
+    'communities' is a list of objects with summary, full_report, and metadata.
+    """
+    existing_keys = set(retriever.docstore.yield_keys())
+
+    new_summaries = []  # For Vector Store (semantic search)
+    new_docstore_payloads = []  # For Doc Store (LLM context)
+    new_ids = []
+
+    for community in communities:
+        # Create a unique ID based on the level and community ID
+        # Example: 'global_community_42'
+        comm_id = f"{level_type}_{getattr(community, 'id', 'unknown')}"
+
+        if comm_id not in existing_keys:
+            # 1. Prepare Summary Document for Vector Search
+            # We search against the summary because it's densly packed with keywords
+            summary_doc = Document(
+                page_content=community.summary,
+                metadata={
+                    id_key: comm_id,
+                    "level": level_type,
+                    "title": getattr(community, "title", ""),
+                },
+            )
+
+            # 2. Prepare Full Report for Docstore
+            # This is what the retriever returns to the LLM
+            full_report = {
+                "community_id": comm_id,
+                "level": level_type,
+                "summary": community.summary,
+                "full_content": community.full_report,  # Detailed entities/edges
+            }
+
+            new_ids.append(comm_id)
+            new_summaries.append(summary_doc)
+            new_docstore_payloads.append(json.dumps(full_report).encode("utf-8"))
+
+    if new_summaries:
+        # Step A: Add to Vector Store
+        retriever.vectorstore.add_documents(new_summaries)
+        # Step B: Add to Doc Store
+        retriever.docstore.mset(list(zip(new_ids, new_docstore_payloads)))
+        print(f"Added {len(new_ids)} {level_type} communities to the retriever.")
+    else:
+        print(f"No new {level_type} communities to add.")

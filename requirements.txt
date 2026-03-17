@@ -13,3 +13,4 @@ langchain_chroma
 tqdm
 nltk
 docker
+graphdatascience
