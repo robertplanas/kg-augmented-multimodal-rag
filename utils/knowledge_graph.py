@@ -19,11 +19,13 @@ class Relationship(BaseModel):
     head_type: str = Field(
         description="Upper-case category (e.g., PERSON, TECH, GEO, ORG)."
     )
+    head_description: str = Field(description="Brief description of the subject.")
     relation: str = Field(
         description="Predicate in SCREAMING_SNAKE_CASE. Use specific verbs (e.g., ACQUIRED_BY instead of HAS)."
     )
     tail: str = Field(description="Normalized object name. Translate to English.")
     tail_type: str = Field(description="Upper-case category for the object.")
+    tail_description: str = Field(description="Brief description of the object.")
     confidence: float = Field(
         description="Likelihood the relationship is explicitly supported by text (0.0-1.0)."
     )
