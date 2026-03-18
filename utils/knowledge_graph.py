@@ -1,5 +1,5 @@
 from pyexpat import model
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, Field
 from langchain_ollama import ChatOllama
 from langchain_core.output_parsers import PydanticOutputParser
@@ -13,6 +13,10 @@ LOGGER = logging.getLogger(__name__)
 
 
 class Relationship(BaseModel):
+    head_id: Optional[str] = Field(
+        default=None,
+        description="Internal identifier for the head generated after extraction.",
+    )
     head: str = Field(
         description="Normalized subject name. Use full names (e.g., 'Elon Musk' not 'Musk'). Translate to English."
     )
@@ -20,20 +24,27 @@ class Relationship(BaseModel):
         description="Upper-case category (e.g., PERSON, TECH, GEO, ORG)."
     )
     head_description: str = Field(description="Brief description of the subject.")
+    head_language: str = Field(
+        description="The language of 'head' field in ISO 3 letters code in lowercase."
+    )
     relation: str = Field(
         description="Predicate in SCREAMING_SNAKE_CASE. Use specific verbs (e.g., ACQUIRED_BY instead of HAS)."
+    )
+    tail_id: Optional[str] = Field(
+        default=None,
+        description="Internal identifier for the tail generated after extraction.",
     )
     tail: str = Field(description="Normalized object name. Translate to English.")
     tail_type: str = Field(description="Upper-case category for the object.")
     tail_description: str = Field(description="Brief description of the object.")
+    tail_language: str = Field(
+        description="The language of 'tail' field in ISO 3 letters code in lowercase."
+    )
     confidence: float = Field(
         description="Likelihood the relationship is explicitly supported by text (0.0-1.0)."
     )
     context: str = Field(
         description="A short quote from the text justifying this link."
-    )
-    language: str = Field(
-        description="The language of the text in ISO 3 letters code in lowercase."
     )
 
 

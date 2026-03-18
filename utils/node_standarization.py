@@ -60,9 +60,8 @@ def translate_nodes(document_relationships, model_translate="gemma3:latest"):
     to_translate = []
     for relationships in document_relationships.values():
         for relation in relationships:
-            if getattr(relation, "language", "en") != "en":
-                to_translate.append(relation.head)
-                to_translate.append(relation.tail)
+            to_translate.append(relation.head)
+            to_translate.append(relation.tail)
 
     if not to_translate:
         return document_relationships
@@ -83,10 +82,11 @@ def translate_nodes(document_relationships, model_translate="gemma3:latest"):
     # 3. Re-assign the translated values back to the objects
     for relationships in document_relationships.values():
         for relation in relationships:
-            if getattr(relation, "language", "en") != "en":
-                relation.head = translated_map.get(relation.head, relation.head)
-                relation.tail = translated_map.get(relation.tail, relation.tail)
-                relation.language = "en"  # Mark as done
+            relation.head = translated_map.get(relation.head, relation.head)
+            relation.head_language = "en"  # Mark as done
+
+            relation.tail = translated_map.get(relation.tail, relation.tail)
+            relation.tail_language = "en"  # Mark as done
 
     return document_relationships
 

@@ -88,6 +88,18 @@ def generate_id(filename: str, content: str):
     return hashlib.sha256((filename + "_" + content).encode("utf-8")).hexdigest()
 
 
+def generate_node_id(name: str, type: str, description: str):
+    if name is None:
+        name = ""
+    if type is None:
+        type = ""
+    if description is None:
+        description = ""
+    return hashlib.sha256(
+        (name + "_" + type + "_" + description).encode("utf-8")
+    ).hexdigest()
+
+
 def generate_database_and_retriever(
     chroma_index_folder="chroma_index",
     raw_data_folder="raw_data",
@@ -200,3 +212,40 @@ def populate_community_database(
         print(f"Added {len(new_ids)} {level_type} communities to the retriever.")
     else:
         print(f"No new {level_type} communities to add.")
+
+
+def populate_node_db(retriever, nodes):
+
+    new_nodes = []  # For Vector Store (semantic search)
+    new_docstore_payloads = []  # For Doc Store (LLM context)
+    new_ids = []
+
+    existing_keys = set(retriever.docstore.yield_keys())
+    for node in nodes:
+        node_id = generate_node_id(node["name"], node["type"], node["description"])
+        if node_id not in existing_keys:
+            node_doc = Document(
+                page_content=node["name"],
+                metadata={
+                    "node_id": node_id,
+                },
+            )
+
+            full_node_report = {
+                "node_id": node_id,
+                "name": node["name"],
+                "type": node["type"],
+                "description": node["description"],
+            }
+            new_ids.append(node_id)
+            new_nodes.append(node_doc)
+            new_docstore_payloads.append(json.dumps(full_node_report).encode("utf-8"))
+
+    if new_nodes:
+        # Step A: Add to Vector Store
+        retriever.vectorstore.add_documents(new_nodes)
+        # Step B: Add to Doc Store
+        retriever.docstore.mset(list(zip(new_ids, new_docstore_payloads)))
+        print(f"Added {len(new_ids)} nodes to the retriever.")
+    else:
+        print("No new nodes to add.")
