@@ -214,11 +214,16 @@ def populate_community_database(
         print(f"No new {level_type} communities to add.")
 
 
-def populate_node_db(retriever, nodes):
+def populate_node_db(
+    retriever,
+    nodes,
+):
 
     new_nodes = []  # For Vector Store (semantic search)
     new_docstore_payloads = []  # For Doc Store (LLM context)
     new_ids = []
+
+    id_key = retriever.id_key
 
     existing_keys = set(retriever.docstore.yield_keys())
     for node in nodes:
@@ -227,7 +232,7 @@ def populate_node_db(retriever, nodes):
             node_doc = Document(
                 page_content=node["name"],
                 metadata={
-                    "node_id": node_id,
+                    id_key: node_id,
                 },
             )
 
