@@ -68,6 +68,24 @@ def ingest_document(
     document_path: str,
     tokenizer_model_path: str = "local_tokenizer/embeddinggemma",
 ):
+
+    if document_path.endswith(".pdf"):
+        return ingest_pdf_document(document_path, tokenizer_model_path)
+
+    if document_path.endswith(".ipynb"):
+        return ingest_ipynb_document(document_path, tokenizer_model_path)
+
+    if document_path.endswith(".py"):
+        return ingest_ipynb_document(document_path, tokenizer_model_path)
+
+    else:
+        raise ValueError(f"Unsupported file format: {document_path}")
+
+
+def ingest_pdf_document(
+    document_path: str,
+    tokenizer_model_path: str = "local_tokenizer/embeddinggemma",
+):
     LOGGER.info(
         "Defining the Converter and converting the pdf document with docling..."
     )
@@ -138,3 +156,17 @@ def ingest_document(
     text_objs = [TextChunk(chunk.text, chunk.meta) for chunk in chunks]
 
     return text_objs, table_objs, images_objs
+
+
+def ingest_ipynb_document(
+    document_path: str,
+    tokenizer_model_path: str = "local_tokenizer/embeddinggemma",
+):
+    raise NotImplementedError
+
+
+def ingest_py_document(
+    document_path: str,
+    tokenizer_model_path: str = "local_tokenizer/embeddinggemma",
+):
+    raise NotImplementedError
