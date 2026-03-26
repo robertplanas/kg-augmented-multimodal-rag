@@ -12,6 +12,9 @@ from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTok
 from docling.chunking import HybridChunker
 from docling_core.types.doc.labels import DocItemLabel
 
+
+from langchain_community.document_loaders.generic import GenericLoader
+from langchain_community.document_loaders.parsers import LanguageParser
 from transformers import AutoTokenizer
 
 import imagehash
@@ -19,7 +22,7 @@ from PIL import Image as PILImage
 import io
 import base64
 
-from utils.objects import TableObject, ImageObject, TextChunk
+from utils.objects import TableObject, ImageObject, TextChunk, PyDocsObject
 
 import logging
 
@@ -167,6 +170,10 @@ def ingest_ipynb_document(
 
 def ingest_py_document(
     document_path: str,
-    tokenizer_model_path: str = "local_tokenizer/embeddinggemma",
 ):
-    raise NotImplementedError
+    loader = GenericLoader.from_filesystem(
+        document_path,
+        parser=LanguageParser(language="python"),
+    )
+    python_docs = loader.load()
+    return [PyDocsObject(doc) for doc in python_docs]

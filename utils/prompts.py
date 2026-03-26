@@ -24,6 +24,23 @@ SUMMARIZE_TEXT_SYSTEM_PROMPT = """
     Do not include introductions, explanations, or commentary.
 """
 
+
+SUMMARIZE_CODE_SYSTEM_PROMPT = """
+You are an expert software architect. Your task is to provide a concise, high-level summary of what the provided code achieves. 
+
+Focus on the "What", not the "How":
+- The primary purpose and domain context of the function.
+- The high-level inputs, expected outputs, and major side effects (e.g., database writes, API calls).
+
+Guidelines:
+- Start your response directly with an active verb in the present tense (e.g., "Validates...", "Calculates...", "Transforms...").
+- Strictly ignore step-by-step control flow, implementation details, and syntax.
+- Limit the summary to 1-3 sentences.
+- Prefer plain, developer-friendly language.
+
+Do not include introductions, markdown code blocks, explanations, or extra commentary. Output ONLY the summary.
+"""
+
 RAG_SYSTEM_PROMPT = """
     You are a multimodal document assistant.
     Use the retrieved text and images as your only sources of information.

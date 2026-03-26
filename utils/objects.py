@@ -5,11 +5,13 @@ from langchain_core.output_parsers import StrOutputParser
 import io
 import base64
 from IPython.display import Image, display
+from matplotlib.pyplot import cla
 
 from utils.prompts import (
     SUMMARIZE_IMAGE_SYSTEM_PROMPT,
     SUMMARIZE_TABLE_SYSTEM_PROMPT,
     SUMMARIZE_TEXT_SYSTEM_PROMPT,
+    SUMMARIZE_CODE_SYSTEM_PROMPT,
 )
 
 
@@ -308,3 +310,45 @@ class TextChunk:
         model = OllamaLLM(model=model_name)
         chain = model | StrOutputParser()
         self.description = chain.invoke(messages)
+
+
+class CodeObject:
+    content: str
+    description: str
+    metadata: dict
+    context: str
+    type: str
+
+    def __init__(self, content, description, metadata, context, type):
+        self.content = content
+        self.description = description
+        self.metadata = metadata
+        self.context = context
+        self.type = type
+
+
+class PyDocsObject(CodeObject):
+    def __init__(
+        self,
+        document,
+    ):
+
+        content = document.page_content
+        description = self.summarize_code(document.page_content)
+        metadata = document.metadata
+        context = None
+        document_type = metadata["content_type"]
+
+        super().__init__(content, description, metadata, context, document_type)
+
+    def summarize_code(
+        content, system_prompt=SUMMARIZE_CODE_SYSTEM_PROMPT, model_name="gemma3:latest"
+    ):
+        # We build the message list manually to handle the image block correctly
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=f"{content}"),
+        ]
+        model = OllamaLLM(model=model_name)
+        chain = model | StrOutputParser()
+        return chain.invoke(messages)
