@@ -15,18 +15,89 @@ from docling_core.types.doc.labels import DocItemLabel
 
 from langchain_community.document_loaders.generic import GenericLoader
 from langchain_community.document_loaders.parsers import LanguageParser
+from langchain_community.document_loaders import NotebookLoader
 from transformers import AutoTokenizer
 
 import imagehash
 from PIL import Image as PILImage
 import io
+import os
 import base64
+import nbformat
 
 from utils.objects import TableObject, ImageObject, TextChunk, PyDocsObject
 
 import logging
 
+
+from langchain_core.schema import Document
+from langchain_core.text_splitter import RecursiveCharacterTextSplitter
+
 LOGGER = logging.getLogger(__name__)
+
+
+class NotebookImageAwareSplitter:
+    def __init__(self, chunk_size=800, chunk_overlap=100):
+        self.text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size, chunk_overlap=chunk_overlap
+        )
+
+    def split(self, notebook_json):
+        docs = []
+
+        for i, cell in enumerate(notebook_json["cells"]):
+            cell_type = cell.get("cell_type")
+            source = "".join(cell.get("source", []))
+
+            # ---- TEXT (markdown + code) ----
+            if source.strip():
+                base_doc = Document(
+                    page_content=source,
+                    metadata={
+                        "cell_index": i,
+                        "cell_type": cell_type,
+                    },
+                )
+
+                docs.extend(self.text_splitter.split_documents([base_doc]))
+
+            # ---- OUTPUTS ----
+            if cell_type == "code":
+                for output in cell.get("outputs", []):
+                    # TEXT OUTPUTS
+                    if "text" in output:
+                        text_output = "".join(output["text"])
+                        docs.append(
+                            Document(
+                                page_content=text_output,
+                                metadata={"cell_index": i, "type": "output_text"},
+                            )
+                        )
+
+                    # IMAGE OUTPUTS
+                    if "data" in output:
+                        for mime, data in output["data"].items():
+                            if mime.startswith("image/"):
+                                image_data = (
+                                    data if isinstance(data, str) else "".join(data)
+                                )
+
+                                docs.append(
+                                    Document(
+                                        page_content="Image output from notebook cell",
+                                        metadata={
+                                            "type": "image",
+                                            "mime_type": mime,
+                                            "image_base64": image_data,
+                                            "cell_index": i,
+                                            "source_code": source[
+                                                :500
+                                            ],  # optional context
+                                        },
+                                    )
+                                )
+
+        return docs
 
 
 def filter_images(base64_list, hash_threshold=10):
@@ -165,7 +236,40 @@ def ingest_ipynb_document(
     document_path: str,
     tokenizer_model_path: str = "local_tokenizer/embeddinggemma",
 ):
-    raise NotImplementedError
+
+    # Now, use LangChain's loader on the CLEANED notebook
+    loader = NotebookLoader(
+        document_path, include_outputs=True, max_output_length=9999999
+    )
+    result = loader.load()
+    assert len(result) == 1
+    result = result[0]
+
+    LOGGER.info("Loading tokenizer...")
+    tok_ = AutoTokenizer.from_pretrained(
+        tokenizer_model_path,
+        # Optional: ensure it doesn't try to download anything if path is missing
+        local_files_only=True,
+    )
+
+    tokenizer = HuggingFaceTokenizer(
+        tokenizer=tok_,
+        max_tokens=tok_.model_max_length,
+    )
+
+    LOGGER.info("Creating Hybrid Chunker...")
+
+    chunker = HybridChunker(
+        tokenizer=tokenizer,
+        max_tokens=tok_.model_max_length / 4,
+        serializer_provider=MDTableSerializerProvider(),
+    )
+
+    LOGGER.info("Chunking the document")
+    chunk_iter = chunker.chunk(dl_doc=result)
+    chunks = list(chunk_iter)
+
+    return chunks
 
 
 def ingest_py_document(

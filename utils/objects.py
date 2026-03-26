@@ -352,3 +352,18 @@ class PyDocsObject(CodeObject):
         model = OllamaLLM(model=model_name)
         chain = model | StrOutputParser()
         return chain.invoke(messages)
+
+
+class NotebookDocument(CodeObject):
+    def __init__(
+        self,
+        document,
+    ):
+
+        content = document.page_content
+        description = self.summarize_code(document.page_content)
+        metadata = document.metadata
+        context = None
+        document_type = metadata["content_type"]
+
+        super().__init__(content, description, metadata, context, document_type)
