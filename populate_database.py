@@ -39,8 +39,11 @@ if __name__ == "__main__":
 
     folder = args.document_folder
     assert folder is not None and folder != "", "Folder needs to be specified"
-    LOGGER.info("Parsing all pdf documents in {}".format(folder))
-    all_documents = glob.glob(f"{folder}/*.pdf")
+    LOGGER.info("Parsing supported documents in %s", folder)
+    all_documents = []
+    for extension in ("pdf", "ipynb"):
+        all_documents.extend(glob.glob(f"{folder}/*.{extension}"))
+    all_documents = sorted(all_documents)
 
     all_texts = []
     all_tables = []

@@ -5,7 +5,6 @@ from langchain_core.output_parsers import StrOutputParser
 import io
 import base64
 from IPython.display import Image, display
-from matplotlib.pyplot import cla
 
 from utils.prompts import (
     SUMMARIZE_IMAGE_SYSTEM_PROMPT,
@@ -30,6 +29,66 @@ def get_central_tokens(text, max_tokens, tokenizer):
     end_idx = start_idx + max_tokens
 
     return tokenizer.tokenizer.decode(tokens[start_idx:end_idx])
+
+
+def build_context_from_sequence(
+    elements,
+    target_sequence_index,
+    tokenizer,
+    max_context_len=512,
+    target_text=None,
+):
+    if not elements:
+        return ""
+
+    max_tokens = max_context_len if max_context_len is not None else tokenizer.max_tokens
+    index_item = None
+    target_item = None
+
+    for i, item in enumerate(elements):
+        if item.get("sequence_index") == target_sequence_index:
+            index_item = i
+            target_item = item
+            break
+
+    if index_item is None:
+        return ""
+
+    if target_text is None:
+        target_text = target_item.get("context_text") or target_item.get("content", "")
+
+    target_tokens = len(tokenizer.tokenizer.encode(target_text))
+    if target_tokens >= max_tokens:
+        return get_central_tokens(target_text, max_tokens, tokenizer)
+
+    remaining_budget = max_tokens - target_tokens
+    half_remaining = remaining_budget // 2
+
+    previous_context_text = ""
+    current_prev_tokens = 0
+    p = index_item - 1
+    while p >= 0 and current_prev_tokens < half_remaining:
+        item_text = elements[p].get("context_text", "")
+        item_tokens = tokenizer.tokenizer.encode(item_text)
+        if current_prev_tokens + len(item_tokens) > half_remaining:
+            break
+        previous_context_text = item_text + "\n" + previous_context_text
+        current_prev_tokens += len(item_tokens)
+        p -= 1
+
+    post_context_text = ""
+    current_post_tokens = 0
+    n = index_item + 1
+    while n < len(elements) and (current_post_tokens + current_prev_tokens) < remaining_budget:
+        item_text = elements[n].get("context_text", "")
+        item_tokens = tokenizer.tokenizer.encode(item_text)
+        if current_post_tokens + len(item_tokens) > (remaining_budget - current_prev_tokens):
+            break
+        post_context_text = post_context_text + "\n" + item_text
+        current_post_tokens += len(item_tokens)
+        n += 1
+
+    return f"{previous_context_text}\n{target_text}\n{post_context_text}".strip()
 
 
 class DocumentObject:
@@ -266,6 +325,16 @@ class TextChunk:
         """
         Extracts high-level and spatial metadata from a Docling DocMeta object.
         """
+        if isinstance(meta, dict):
+            res = dict(meta)
+            if "filename" not in res:
+                res["filename"] = "unknown"
+            if "pages" not in res:
+                res["pages"] = []
+            if "bboxes" not in res:
+                res["bboxes"] = []
+            return res
+
         # 1. Basic File Info
         origin = getattr(meta, "origin", None)
         res = {
@@ -306,6 +375,55 @@ class TextChunk:
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=f"{self.text}"),
+        ]
+        model = OllamaLLM(model=model_name)
+        chain = model | StrOutputParser()
+        self.description = chain.invoke(messages)
+
+
+class NotebookTableObject(DocumentObject):
+    def __init__(self, markdown, metadata, context, tokenizer):
+        self.document_type = "table"
+        super().__init__(document_type=self.document_type, tokenizer=tokenizer)
+        self.markdown = markdown
+        self.metadata = metadata
+        self.context = context
+
+    def summarize_table(
+        self, system_instruction=SUMMARIZE_TABLE_SYSTEM_PROMPT, model_name="gemma3:12b"
+    ):
+        messages = [
+            SystemMessage(content=system_instruction),
+            HumanMessage(content=f"Background Context: {self.context}"),
+            HumanMessage(content=f"{self.markdown}"),
+        ]
+        model = OllamaLLM(model=model_name)
+        chain = model | StrOutputParser()
+        self.description = chain.invoke(messages)
+
+
+class NotebookImageObject(DocumentObject):
+    def __init__(self, base64_data, metadata, context, tokenizer):
+        self.document_type = "image"
+        super().__init__(document_type=self.document_type, tokenizer=tokenizer)
+        self.base64 = base64_data
+        self.metadata = metadata
+        self.context = context
+
+    def summarize_image(
+        self, system_prompt=SUMMARIZE_IMAGE_SYSTEM_PROMPT, model_name="gemma3:12b"
+    ):
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=f"Background Context: {self.context}"),
+            HumanMessage(
+                content=[
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{self.base64}"},
+                    },
+                ]
+            ),
         ]
         model = OllamaLLM(model=model_name)
         chain = model | StrOutputParser()
