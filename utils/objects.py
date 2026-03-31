@@ -14,8 +14,20 @@ from utils.prompts import (
 )
 
 
+def _encode_token_ids(text, tokenizer):
+    encoded = tokenizer.tokenizer(
+        text,
+        add_special_tokens=False,
+        truncation=False,
+        return_attention_mask=False,
+        return_token_type_ids=False,
+        verbose=False,
+    )
+    return encoded["input_ids"]
+
+
 def get_central_tokens(text, max_tokens, tokenizer):
-    tokens = tokenizer.tokenizer.encode(text)
+    tokens = _encode_token_ids(text, tokenizer)
     total_tokens = len(tokens)
 
     if total_tokens <= max_tokens:
@@ -57,7 +69,7 @@ def build_context_from_sequence(
     if target_text is None:
         target_text = target_item.get("context_text") or target_item.get("content", "")
 
-    target_tokens = len(tokenizer.tokenizer.encode(target_text))
+    target_tokens = len(_encode_token_ids(target_text, tokenizer))
     if target_tokens >= max_tokens:
         return get_central_tokens(target_text, max_tokens, tokenizer)
 
@@ -69,7 +81,7 @@ def build_context_from_sequence(
     p = index_item - 1
     while p >= 0 and current_prev_tokens < half_remaining:
         item_text = elements[p].get("context_text", "")
-        item_tokens = tokenizer.tokenizer.encode(item_text)
+        item_tokens = _encode_token_ids(item_text, tokenizer)
         if current_prev_tokens + len(item_tokens) > half_remaining:
             break
         previous_context_text = item_text + "\n" + previous_context_text
@@ -81,7 +93,7 @@ def build_context_from_sequence(
     n = index_item + 1
     while n < len(elements) and (current_post_tokens + current_prev_tokens) < remaining_budget:
         item_text = elements[n].get("context_text", "")
-        item_tokens = tokenizer.tokenizer.encode(item_text)
+        item_tokens = _encode_token_ids(item_text, tokenizer)
         if current_post_tokens + len(item_tokens) > (remaining_budget - current_prev_tokens):
             break
         post_context_text = post_context_text + "\n" + item_text
@@ -138,7 +150,7 @@ class DocumentObject:
             )
         elif self.document_type == "image":
             target_text = getattr(target_item, "text", "")
-        target_tokens = len(self.tokenizer.tokenizer.encode(target_text))
+        target_tokens = len(_encode_token_ids(target_text, self.tokenizer))
 
         # If the target is already too big, center-crop it and return
         if target_tokens >= max_tokens:
@@ -154,7 +166,7 @@ class DocumentObject:
         p = index_item - 1
         while p >= 0 and current_prev_tokens < half_remaining:
             item_text = getattr(items[p][0], "text", "")
-            item_tokens = self.tokenizer.tokenizer.encode(item_text)
+            item_tokens = _encode_token_ids(item_text, self.tokenizer)
 
             if current_prev_tokens + len(item_tokens) > half_remaining:
                 break
@@ -172,7 +184,7 @@ class DocumentObject:
             and (current_post_tokens + current_prev_tokens) < remaining_budget
         ):
             item_text = getattr(items[n][0], "text", "")
-            item_tokens = self.tokenizer.tokenizer.encode(item_text)
+            item_tokens = _encode_token_ids(item_text, self.tokenizer)
 
             if current_post_tokens + len(item_tokens) > (
                 remaining_budget - current_prev_tokens
