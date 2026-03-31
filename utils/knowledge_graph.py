@@ -5,10 +5,14 @@ from langchain_core.prompts import ChatPromptTemplate
 import logging
 import asyncio
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
 from tqdm.asyncio import tqdm_asyncio
 from utils.models import LLMModel
 
 LOGGER = logging.getLogger(__name__)
+_THREAD_LOCAL = threading.local()
 
 
 class Relationship(BaseModel):
@@ -63,6 +67,44 @@ def _resolve_llm(llm=None, model_name="gemma3:12b", provider="ollama", **llm_kwa
         provider=provider,
         **llm_kwargs,
     ).as_langchain_llm()
+
+
+def _get_thread_chains(
+    model_name_text,
+    model_name_table,
+    model_name_image,
+    provider_text,
+    provider_table,
+    provider_image,
+    temperature,
+):
+    key = (
+        model_name_text,
+        model_name_table,
+        model_name_image,
+        provider_text,
+        provider_table,
+        provider_image,
+        temperature,
+    )
+    if getattr(_THREAD_LOCAL, "kg_chain_key", None) != key:
+        _THREAD_LOCAL.chain_text = chain_for_text(
+            model_name=model_name_text,
+            provider=provider_text,
+            temperature=temperature,
+        )
+        _THREAD_LOCAL.chain_table = chain_for_tables(
+            model_name=model_name_table,
+            provider=provider_table,
+            temperature=temperature,
+        )
+        _THREAD_LOCAL.chain_image = chain_for_images(
+            model_name=model_name_image,
+            provider=provider_image,
+            temperature=temperature,
+        )
+        _THREAD_LOCAL.kg_chain_key = key
+    return _THREAD_LOCAL.chain_text, _THREAD_LOCAL.chain_table, _THREAD_LOCAL.chain_image
 
 
 def chain_for_text(model_name="gemma3:12b", provider="ollama", temperature=0, llm=None):
@@ -284,13 +326,120 @@ async def aextract_relationships_from_element(
 
 
 def parse_document_to_dict(doc):
+    if isinstance(doc, dict):
+        data = dict(doc)
+    else:
+        decoded_document = doc.decode("utf-8") if isinstance(doc, bytes) else str(doc)
+        data = json.loads(decoded_document)
 
-    decoded_document = doc.decode("utf-8")
-    data = json.loads(decoded_document)
-
-    if "metadata" in data:
+    if "metadata" in data and isinstance(data["metadata"], str):
         data["metadata"] = json.loads(data["metadata"])
     return data
+
+
+def extract_relationships_from_element(
+    element,
+    element_id,
+    chain_text,
+    chain_table,
+    chain_image,
+):
+    type_ = element.get("type", None)
+    content = element.get("content", None)
+    description = element.get("description", None)
+    context = element.get("context", None)
+
+    if content is None:
+        LOGGER.warning("No content found for element: %s", element_id)
+        return None
+    if type_ is None:
+        LOGGER.warning("No type found for element: %s", element_id)
+        return None
+
+    if type_ == "table":
+        response = chain_table.invoke(
+            {"input": content, "description": description, "context": context}
+        )
+        return response.relationships
+    if type_ == "image":
+        response = chain_image.invoke(
+            {"input": content, "description": description, "context": context}
+        )
+        return response.relationships
+    if type_ == "text":
+        response = chain_text.invoke({"input": content})
+        return response.relationships
+
+    LOGGER.warning("Unknown element type: %s", type_)
+    return None
+
+
+def _thread_worker(
+    doc_id,
+    doc,
+    model_name_text,
+    model_name_table,
+    model_name_image,
+    provider_text,
+    provider_table,
+    provider_image,
+    temperature,
+):
+    parsed_doc = parse_document_to_dict(doc)
+    chain_text, chain_table, chain_image = _get_thread_chains(
+        model_name_text=model_name_text,
+        model_name_table=model_name_table,
+        model_name_image=model_name_image,
+        provider_text=provider_text,
+        provider_table=provider_table,
+        provider_image=provider_image,
+        temperature=temperature,
+    )
+    relationships = extract_relationships_from_element(
+        element=parsed_doc,
+        element_id=doc_id,
+        chain_text=chain_text,
+        chain_table=chain_table,
+        chain_image=chain_image,
+    )
+    return doc_id, relationships
+
+
+def convert_to_graph_elements_pipeline_threaded(
+    documents_dict,
+    model_name_text="gemma3:12b",
+    model_name_table="gemma3:12b",
+    model_name_image="gemma3:12b",
+    provider_text="ollama",
+    provider_table="ollama",
+    provider_image="ollama",
+    temperature=0,
+    max_workers=5,
+):
+    results = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(
+                _thread_worker,
+                doc_id,
+                doc,
+                model_name_text,
+                model_name_table,
+                model_name_image,
+                provider_text,
+                provider_table,
+                provider_image,
+                temperature,
+            )
+            for doc_id, doc in documents_dict.items()
+        ]
+
+        for future in tqdm(as_completed(futures), total=len(futures)):
+            doc_id, relationships = future.result()
+            if relationships is not None:
+                results[doc_id] = relationships
+
+    return results
 
 
 async def convert_to_graph_elements_pipeline(
@@ -303,7 +452,22 @@ async def convert_to_graph_elements_pipeline(
     provider_image="ollama",
     temperature=0,
     max_concurrency=5,
+    execution_mode="async",
 ):
+    if execution_mode == "thread":
+        return await asyncio.to_thread(
+            convert_to_graph_elements_pipeline_threaded,
+            documents_dict,
+            model_name_text,
+            model_name_table,
+            model_name_image,
+            provider_text,
+            provider_table,
+            provider_image,
+            temperature,
+            max_concurrency,
+        )
+
     chain_text = chain_for_text(
         model_name=model_name_text,
         provider=provider_text,
