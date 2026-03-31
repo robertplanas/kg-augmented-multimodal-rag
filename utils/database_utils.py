@@ -2,7 +2,6 @@ import hashlib
 import os
 import chromadb
 from langchain_chroma import Chroma
-from langchain_ollama import OllamaEmbeddings
 from langchain_classic.storage import LocalFileStore
 from langchain_core.documents import Document
 from langchain_classic.retrievers.multi_vector import MultiVectorRetriever
@@ -10,6 +9,7 @@ from langchain_classic.retrievers.multi_vector import MultiVectorRetriever
 import json
 
 import logging
+from utils.models import EmbeddingModel
 
 LOGGER = logging.getLogger(__name__)
 
@@ -106,6 +106,8 @@ def generate_database_and_retriever(
     main_folder="./localdb",
     db_name="multi_modal_rag",
     ollama_model_name="embeddinggemma:latest",
+    embedding_provider="ollama",
+    embedding_model_name=None,
 ):
     if not os.path.exists(main_folder):
         LOGGER.info("Creating local db folder.")
@@ -132,10 +134,16 @@ def generate_database_and_retriever(
 
     LOGGER.info("Initiating Vector Store")
 
+    model_name = embedding_model_name or ollama_model_name
+    embedding_model = EmbeddingModel(
+        model_name=model_name,
+        provider=embedding_provider,
+    )
+
     vectorstore = Chroma(
         client=client,
         collection_name=db_name,
-        embedding_function=OllamaEmbeddings(model=ollama_model_name),
+        embedding_function=embedding_model.as_langchain_embedding(),
     )
 
     store = LocalFileStore(raw_data_folder_complete)
