@@ -1,13 +1,12 @@
-from pyexpat import model
 from typing import List, Optional
 from pydantic import BaseModel, Field
-from langchain_ollama import ChatOllama
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 import logging
 import asyncio
 import json
 from tqdm.asyncio import tqdm_asyncio
+from utils.models import LLMModel
 
 LOGGER = logging.getLogger(__name__)
 
@@ -54,9 +53,25 @@ class KnowledgeGraph(BaseModel):
     relationships: List[Relationship]
 
 
-def chain_for_text(model_name="gemma3:12b", temperature=0):
+def _resolve_llm(llm=None, model_name="gemma3:12b", provider="ollama", **llm_kwargs):
+    if llm is not None:
+        if hasattr(llm, "as_langchain_llm"):
+            return llm.as_langchain_llm()
+        return llm
+    return LLMModel(
+        model_name=model_name,
+        provider=provider,
+        **llm_kwargs,
+    ).as_langchain_llm()
 
-    llm = ChatOllama(temperature=temperature, model=model_name)
+
+def chain_for_text(model_name="gemma3:12b", provider="ollama", temperature=0, llm=None):
+    llm = _resolve_llm(
+        llm=llm,
+        model_name=model_name,
+        provider=provider,
+        temperature=temperature,
+    )
     parser = PydanticOutputParser(pydantic_object=KnowledgeGraph)
 
     prompt = ChatPromptTemplate.from_messages(
@@ -87,8 +102,18 @@ def chain_for_text(model_name="gemma3:12b", temperature=0):
     return prompt | llm | parser
 
 
-def chain_for_tables(model_name="gemma3:12b", temperature=0):
-    llm = ChatOllama(temperature=temperature, model=model_name)
+def chain_for_tables(
+    model_name="gemma3:12b",
+    provider="ollama",
+    temperature=0,
+    llm=None,
+):
+    llm = _resolve_llm(
+        llm=llm,
+        model_name=model_name,
+        provider=provider,
+        temperature=temperature,
+    )
     parser = PydanticOutputParser(pydantic_object=KnowledgeGraph)
 
     system_instruction = (
@@ -124,9 +149,19 @@ def chain_for_tables(model_name="gemma3:12b", temperature=0):
     return prompt | llm | parser
 
 
-def chain_for_images(model_name="gemma3:12b", temperature=0):
+def chain_for_images(
+    model_name="gemma3:12b",
+    provider="ollama",
+    temperature=0,
+    llm=None,
+):
     # Ensure the model used supports vision/multimodality
-    llm = ChatOllama(temperature=temperature, model=model_name)
+    llm = _resolve_llm(
+        llm=llm,
+        model_name=model_name,
+        provider=provider,
+        temperature=temperature,
+    )
     parser = PydanticOutputParser(pydantic_object=KnowledgeGraph)
 
     system_instruction = (
@@ -176,7 +211,13 @@ async def aextract_relationships_from_element(
     model_name_text="gemma3:12b",
     model_name_table="gemma3:12b",
     model_name_image="gemma3:12b",
+    provider_text="ollama",
+    provider_table="ollama",
+    provider_image="ollama",
     temperature=0,
+    chain_text=None,
+    chain_table=None,
+    chain_image=None,
 ):
 
     type_ = element.get("type", None)
@@ -195,7 +236,11 @@ async def aextract_relationships_from_element(
         LOGGER.info(
             "Extracting relationships from table element: {}".format(element_id)
         )
-        chain = chain_for_tables(model_name=model_name_table, temperature=temperature)
+        chain = chain_table or chain_for_tables(
+            model_name=model_name_table,
+            provider=provider_table,
+            temperature=temperature,
+        )
 
         response = await chain.ainvoke(
             {"input": content, "description": description, "context": context}
@@ -213,7 +258,11 @@ async def aextract_relationships_from_element(
         LOGGER.info(
             "Extracting relationships from image element: {}".format(element_id)
         )
-        chain = chain_for_images(model_name=model_name_image, temperature=temperature)
+        chain = chain_image or chain_for_images(
+            model_name=model_name_image,
+            provider=provider_image,
+            temperature=temperature,
+        )
         response = await chain.ainvoke(
             {"input": content, "description": description, "context": context}
         )
@@ -221,7 +270,11 @@ async def aextract_relationships_from_element(
 
     elif type_ == "text":
         LOGGER.info("Extracting relationships from text element: {}".format(element_id))
-        chain = chain_for_text(model_name=model_name_text, temperature=temperature)
+        chain = chain_text or chain_for_text(
+            model_name=model_name_text,
+            provider=provider_text,
+            temperature=temperature,
+        )
         response = await chain.ainvoke({"input": content})
         return response.relationships
 
@@ -245,16 +298,27 @@ async def convert_to_graph_elements_pipeline(
     model_name_text="gemma3:12b",
     model_name_table="gemma3:12b",
     model_name_image="gemma3:12b",
+    provider_text="ollama",
+    provider_table="ollama",
+    provider_image="ollama",
     temperature=0,
     max_concurrency=5,
 ):
-
-    #### PEDNING ######
-
-    # I would like to implement the option of selecting another chat like OpenAI ChatGPT or Gemini
-    # to be used in the pipeline
-
-    ##################
+    chain_text = chain_for_text(
+        model_name=model_name_text,
+        provider=provider_text,
+        temperature=temperature,
+    )
+    chain_table = chain_for_tables(
+        model_name=model_name_table,
+        provider=provider_table,
+        temperature=temperature,
+    )
+    chain_image = chain_for_images(
+        model_name=model_name_image,
+        provider=provider_image,
+        temperature=temperature,
+    )
 
     sem = asyncio.Semaphore(max_concurrency)
 
@@ -269,7 +333,13 @@ async def convert_to_graph_elements_pipeline(
                 model_name_text,
                 model_name_table,
                 model_name_image,
+                provider_text,
+                provider_table,
+                provider_image,
                 temperature,
+                chain_text,
+                chain_table,
+                chain_image,
             )
             return doc_id, relationship
 

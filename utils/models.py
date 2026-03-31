@@ -1,4 +1,4 @@
-from langchain_ollama import OllamaEmbeddings, OllamaLLM
+from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_google_genai import (
     ChatGoogleGenerativeAI,
@@ -56,7 +56,7 @@ class LLMModel:
 
     def _build_model(self, **kwargs):
         if self.provider == "ollama":
-            return OllamaLLM(model=self.model_name, **kwargs)
+            return ChatOllama(model=self.model_name, **kwargs)
 
         if self.provider == "openai":
             return ChatOpenAI(model=self.model_name, **kwargs)
