@@ -1,5 +1,4 @@
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_ollama import OllamaLLM
 from langchain_core.output_parsers import StrOutputParser
 
 import io
@@ -12,6 +11,15 @@ from utils.prompts import (
     SUMMARIZE_TEXT_SYSTEM_PROMPT,
     SUMMARIZE_CODE_SYSTEM_PROMPT,
 )
+from utils.models import LLMModel
+
+
+def _resolve_llm(llm=None, model_name="gemma3:12b", provider="ollama", **kwargs):
+    if llm is not None:
+        if hasattr(llm, "as_langchain_llm"):
+            return llm.as_langchain_llm()
+        return llm
+    return LLMModel(model_name=model_name, provider=provider, **kwargs).as_langchain_llm()
 
 
 def _encode_token_ids(text, tokenizer):
@@ -237,7 +245,12 @@ class TableObject(DocumentObject):
         return {"filename": doc_filename, "pages": sorted(pages), "bboxes": bboxes}
 
     def summarize_table(
-        self, system_instruction=SUMMARIZE_TABLE_SYSTEM_PROMPT, model_name="gemma3:12b"
+        self,
+        system_instruction=SUMMARIZE_TABLE_SYSTEM_PROMPT,
+        model_name="gemma3:12b",
+        provider="ollama",
+        llm=None,
+        **llm_kwargs,
     ):
         # We build the message list manually to handle the image block correctly
         messages = [
@@ -245,7 +258,12 @@ class TableObject(DocumentObject):
             HumanMessage(content=f"Background Context: {self.context}"),
             HumanMessage(content=f"{self.markdown}"),
         ]
-        model = OllamaLLM(model=model_name)
+        model = _resolve_llm(
+            llm=llm,
+            model_name=model_name,
+            provider=provider,
+            **llm_kwargs,
+        )
         chain = model | StrOutputParser()
         self.description = chain.invoke(messages)
 
@@ -307,7 +325,12 @@ class ImageObject(DocumentObject):
         display(Image(data=image_data))
 
     def summarize_image(
-        self, system_prompt=SUMMARIZE_IMAGE_SYSTEM_PROMPT, model_name="gemma3:12b"
+        self,
+        system_prompt=SUMMARIZE_IMAGE_SYSTEM_PROMPT,
+        model_name="gemma3:12b",
+        provider="ollama",
+        llm=None,
+        **llm_kwargs,
     ):
         # We build the message list manually to handle the image block correctly
         messages = [
@@ -322,7 +345,12 @@ class ImageObject(DocumentObject):
                 ]
             ),
         ]
-        model = OllamaLLM(model=model_name)
+        model = _resolve_llm(
+            llm=llm,
+            model_name=model_name,
+            provider=provider,
+            **llm_kwargs,
+        )
         chain = model | StrOutputParser()
         self.description = chain.invoke(messages)
 
@@ -381,14 +409,24 @@ class TextChunk:
         return res
 
     def summarize_text(
-        self, system_prompt=SUMMARIZE_TEXT_SYSTEM_PROMPT, model_name="gemma3:latest"
+        self,
+        system_prompt=SUMMARIZE_TEXT_SYSTEM_PROMPT,
+        model_name="gemma3:latest",
+        provider="ollama",
+        llm=None,
+        **llm_kwargs,
     ):
         # We build the message list manually to handle the image block correctly
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=f"{self.text}"),
         ]
-        model = OllamaLLM(model=model_name)
+        model = _resolve_llm(
+            llm=llm,
+            model_name=model_name,
+            provider=provider,
+            **llm_kwargs,
+        )
         chain = model | StrOutputParser()
         self.description = chain.invoke(messages)
 
@@ -402,14 +440,24 @@ class NotebookTableObject(DocumentObject):
         self.context = context
 
     def summarize_table(
-        self, system_instruction=SUMMARIZE_TABLE_SYSTEM_PROMPT, model_name="gemma3:12b"
+        self,
+        system_instruction=SUMMARIZE_TABLE_SYSTEM_PROMPT,
+        model_name="gemma3:12b",
+        provider="ollama",
+        llm=None,
+        **llm_kwargs,
     ):
         messages = [
             SystemMessage(content=system_instruction),
             HumanMessage(content=f"Background Context: {self.context}"),
             HumanMessage(content=f"{self.markdown}"),
         ]
-        model = OllamaLLM(model=model_name)
+        model = _resolve_llm(
+            llm=llm,
+            model_name=model_name,
+            provider=provider,
+            **llm_kwargs,
+        )
         chain = model | StrOutputParser()
         self.description = chain.invoke(messages)
 
@@ -423,7 +471,12 @@ class NotebookImageObject(DocumentObject):
         self.context = context
 
     def summarize_image(
-        self, system_prompt=SUMMARIZE_IMAGE_SYSTEM_PROMPT, model_name="gemma3:12b"
+        self,
+        system_prompt=SUMMARIZE_IMAGE_SYSTEM_PROMPT,
+        model_name="gemma3:12b",
+        provider="ollama",
+        llm=None,
+        **llm_kwargs,
     ):
         messages = [
             SystemMessage(content=system_prompt),
@@ -437,7 +490,12 @@ class NotebookImageObject(DocumentObject):
                 ]
             ),
         ]
-        model = OllamaLLM(model=model_name)
+        model = _resolve_llm(
+            llm=llm,
+            model_name=model_name,
+            provider=provider,
+            **llm_kwargs,
+        )
         chain = model | StrOutputParser()
         self.description = chain.invoke(messages)
 
@@ -471,15 +529,26 @@ class PyDocsObject(CodeObject):
 
         super().__init__(content, description, metadata, context, document_type)
 
+    @staticmethod
     def summarize_code(
-        content, system_prompt=SUMMARIZE_CODE_SYSTEM_PROMPT, model_name="gemma3:latest"
+        content,
+        system_prompt=SUMMARIZE_CODE_SYSTEM_PROMPT,
+        model_name="gemma3:latest",
+        provider="ollama",
+        llm=None,
+        **llm_kwargs,
     ):
         # We build the message list manually to handle the image block correctly
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=f"{content}"),
         ]
-        model = OllamaLLM(model=model_name)
+        model = _resolve_llm(
+            llm=llm,
+            model_name=model_name,
+            provider=provider,
+            **llm_kwargs,
+        )
         chain = model | StrOutputParser()
         return chain.invoke(messages)
 
