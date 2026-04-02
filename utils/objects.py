@@ -3,6 +3,7 @@ from langchain_core.output_parsers import StrOutputParser
 
 import io
 import base64
+import os
 from IPython.display import Image, display
 
 from utils.prompts import (
@@ -19,7 +20,27 @@ def _resolve_llm(llm=None, model_name="gemma3:12b", provider="ollama", **kwargs)
         if hasattr(llm, "as_langchain_llm"):
             return llm.as_langchain_llm()
         return llm
-    return LLMModel(model_name=model_name, provider=provider, **kwargs).as_langchain_llm()
+    return LLMModel(
+        model_name=model_name, provider=provider, **kwargs
+    ).as_langchain_llm()
+
+
+def _sanitize_text_for_llm(value, max_chars=None):
+    if value is None:
+        text = ""
+    elif isinstance(value, str):
+        text = value
+    else:
+        text = str(value)
+
+    # Remove null bytes and invalid surrogate code points that can break JSON payload parsing.
+    text = text.replace("\x00", "")
+    text = "".join(ch for ch in text if not 0xD800 <= ord(ch) <= 0xDFFF)
+    text = text.encode("utf-8", "replace").decode("utf-8")
+
+    if max_chars is not None and len(text) > max_chars:
+        return text[:max_chars]
+    return text
 
 
 def _encode_token_ids(text, tokenizer):
@@ -61,7 +82,9 @@ def build_context_from_sequence(
     if not elements:
         return ""
 
-    max_tokens = max_context_len if max_context_len is not None else tokenizer.max_tokens
+    max_tokens = (
+        max_context_len if max_context_len is not None else tokenizer.max_tokens
+    )
     index_item = None
     target_item = None
 
@@ -99,10 +122,15 @@ def build_context_from_sequence(
     post_context_text = ""
     current_post_tokens = 0
     n = index_item + 1
-    while n < len(elements) and (current_post_tokens + current_prev_tokens) < remaining_budget:
+    while (
+        n < len(elements)
+        and (current_post_tokens + current_prev_tokens) < remaining_budget
+    ):
         item_text = elements[n].get("context_text", "")
         item_tokens = _encode_token_ids(item_text, tokenizer)
-        if current_post_tokens + len(item_tokens) > (remaining_budget - current_prev_tokens):
+        if current_post_tokens + len(item_tokens) > (
+            remaining_budget - current_prev_tokens
+        ):
             break
         post_context_text = post_context_text + "\n" + item_text
         current_post_tokens += len(item_tokens)
@@ -537,9 +565,11 @@ class PyDocsObject(CodeObject):
         llm=None,
         **llm_kwargs,
     ):
+        max_input_chars = int(os.getenv("SUMMARY_CODE_MAX_INPUT_CHARS", "12000"))
+        safe_code = _sanitize_text_for_llm(self.content, max_chars=max_input_chars)
         messages = [
             SystemMessage(content=system_prompt),
-            HumanMessage(content=f"{self.content}"),
+            HumanMessage(content=safe_code),
         ]
         model = _resolve_llm(
             llm=llm,
@@ -569,9 +599,11 @@ class NotebookCodeObject(CodeObject):
         llm=None,
         **llm_kwargs,
     ):
+        max_input_chars = int(os.getenv("SUMMARY_CODE_MAX_INPUT_CHARS", "12000"))
+        safe_code = _sanitize_text_for_llm(self.content, max_chars=max_input_chars)
         messages = [
             SystemMessage(content=system_prompt),
-            HumanMessage(content=f"{self.content}"),
+            HumanMessage(content=safe_code),
         ]
         model = _resolve_llm(
             llm=llm,

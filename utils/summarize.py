@@ -71,7 +71,14 @@ def _get_thread_llm(model_name, provider, llm_kwargs):
 
 def _summarize_one(obj, summarize_method, model_name, provider, llm_kwargs):
     llm = _get_thread_llm(model_name, provider, llm_kwargs)
-    getattr(obj, summarize_method)(llm=llm)
+    try:
+        getattr(obj, summarize_method)(llm=llm)
+    except Exception as exc:
+        metadata = getattr(obj, "metadata", {})
+        raise RuntimeError(
+            f"Failed {summarize_method} for object type={type(obj).__name__}, "
+            f"metadata={metadata}"
+        ) from exc
 
 
 def _run_summary_batch(
