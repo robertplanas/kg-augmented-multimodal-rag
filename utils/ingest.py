@@ -26,6 +26,7 @@ from transformers import AutoTokenizer
 
 from utils.objects import (
     ImageObject,
+    NotebookCodeObject,
     NotebookImageObject,
     NotebookTableObject,
     PyDocsObject,
@@ -157,10 +158,14 @@ def _extract_html_tables_as_markdown(html_text):
         return []
 
     tables = []
-    for table_match in re.findall(r"<table[\\s\\S]*?</table>", html_text, flags=re.IGNORECASE):
+    for table_match in re.findall(
+        r"<table[\\s\\S]*?</table>", html_text, flags=re.IGNORECASE
+    ):
         rows = []
         for tr in re.findall(r"<tr[\\s\\S]*?</tr>", table_match, flags=re.IGNORECASE):
-            cells = re.findall(r"<t[hd][^>]*>([\\s\\S]*?)</t[hd]>", tr, flags=re.IGNORECASE)
+            cells = re.findall(
+                r"<t[hd][^>]*>([\\s\\S]*?)</t[hd]>", tr, flags=re.IGNORECASE
+            )
             cleaned = [_strip_html_tags(cell) for cell in cells]
             if cleaned:
                 rows.append(cleaned)
@@ -170,7 +175,10 @@ def _extract_html_tables_as_markdown(html_text):
             body = rows[1:]
             header_line = "| " + " | ".join(header) + " |"
             separator = "| " + " | ".join(["---"] * len(header)) + " |"
-            body_lines = ["| " + " | ".join(row + [""] * (len(header) - len(row))) + " |" for row in body]
+            body_lines = [
+                "| " + " | ".join(row + [""] * (len(header) - len(row))) + " |"
+                for row in body
+            ]
             tables.append("\n".join([header_line, separator] + body_lines))
 
     return tables
@@ -193,12 +201,18 @@ def _csv_to_markdown(csv_text):
     body = rows[1:]
     header_line = "| " + " | ".join(header) + " |"
     separator = "| " + " | ".join(["---"] * len(header)) + " |"
-    body_lines = ["| " + " | ".join(row + [""] * (len(header) - len(row))) + " |" for row in body]
+    body_lines = [
+        "| " + " | ".join(row + [""] * (len(header) - len(row))) + " |" for row in body
+    ]
     return "\n".join([header_line, separator] + body_lines)
 
 
 def _json_tabular_to_markdown(data_obj):
-    if isinstance(data_obj, list) and data_obj and all(isinstance(x, dict) for x in data_obj):
+    if (
+        isinstance(data_obj, list)
+        and data_obj
+        and all(isinstance(x, dict) for x in data_obj)
+    ):
         headers = []
         seen = set()
         for row in data_obj:
@@ -236,7 +250,9 @@ def _json_tabular_to_markdown(data_obj):
     return None
 
 
-def _build_notebook_metadata(path, cell_index, cell_type, sequence_index, output_index=None, mime_type=None):
+def _build_notebook_metadata(
+    path, cell_index, cell_type, sequence_index, output_index=None, mime_type=None
+):
     return {
         "filename": path,
         "origin": "ipynb",
@@ -264,12 +280,15 @@ def ingest_document(
 ):
 
     if document_path.endswith(".pdf"):
+        LOGGER.info("Ingesting PDF document: %s", document_path)
         return ingest_pdf_document(document_path, tokenizer_model_path)
 
     if document_path.endswith(".ipynb"):
+        LOGGER.info("Ingesting Jupyter notebook: %s", document_path)
         return ingest_ipynb_document(document_path, tokenizer_model_path)
 
     if document_path.endswith(".py"):
+        LOGGER.info("Ingesting Python file: %s", document_path)
         return ingest_py_document(document_path)
 
     raise ValueError(f"Unsupported file format: {document_path}")
@@ -334,7 +353,8 @@ def ingest_pdf_document(
     LOGGER.info("Adding text objects")
     text_objs = [TextChunk(chunk.text, chunk.meta) for chunk in chunks]
 
-    return text_objs, table_objs, images_objs
+    code_objs = []
+    return text_objs, table_objs, images_objs, code_objs
 
 
 def ingest_ipynb_document(
@@ -347,6 +367,7 @@ def ingest_ipynb_document(
 
     sequence = []
     text_elements = []
+    code_candidates = []
     table_candidates = []
     image_candidates = []
     sequence_index = 0
@@ -368,7 +389,7 @@ def ingest_ipynb_document(
         cell_type = cell.get("cell_type", "unknown")
         source = _stringify(cell.get("source", ""))
 
-        if source.strip():
+        if source.strip() and cell_type in {"markdown", "raw"}:
             content = f"[{cell_type} cell {cell_index}]\n{source}"
             metadata = _build_notebook_metadata(
                 document_path,
@@ -378,6 +399,23 @@ def ingest_ipynb_document(
             )
             text_item = add_sequence("text", content, metadata)
             text_elements.append(text_item)
+
+        if source.strip() and cell_type == "code":
+            code_metadata = _build_notebook_metadata(
+                document_path,
+                cell_index=cell_index,
+                cell_type=cell_type,
+                sequence_index=sequence_index,
+                mime_type="text/x-python",
+            )
+            code_content = f"# notebook cell {cell_index}\n{source}"
+            code_item = add_sequence(
+                "code",
+                code_content,
+                code_metadata,
+                context_text=source,
+            )
+            code_candidates.append(code_item)
 
         if cell_type == "markdown":
             for markdown_table in _extract_markdown_tables(source):
@@ -465,7 +503,9 @@ def ingest_ipynb_document(
                     output_index=output_index,
                     mime_type="text/plain",
                 )
-                text_item = add_sequence("text", f"[output text]\n{text_plain}", metadata)
+                text_item = add_sequence(
+                    "text", f"[output text]\n{text_plain}", metadata
+                )
                 text_elements.append(text_item)
 
             markdown_output = _stringify(data.get("text/markdown", "")).strip()
@@ -607,14 +647,31 @@ def ingest_ipynb_document(
 
     image_objs = deduplicate_image_objects(image_objs)
 
+    code_objs = []
+    for code_element in code_candidates:
+        context = build_context_from_sequence(
+            sequence,
+            code_element["sequence_index"],
+            tokenizer,
+            target_text=code_element["content"],
+        )
+        code_objs.append(
+            NotebookCodeObject(
+                content=code_element["content"],
+                metadata=code_element["metadata"],
+                context=context,
+            )
+        )
+
     LOGGER.info(
-        "Notebook parsed: %s text chunks, %s tables, %s images",
+        "Notebook parsed: %s text chunks, %s tables, %s images, %s code blocks",
         len(text_objs),
         len(table_objs),
         len(image_objs),
+        len(code_objs),
     )
 
-    return text_objs, table_objs, image_objs
+    return text_objs, table_objs, image_objs, code_objs
 
 
 def ingest_py_document(
@@ -625,4 +682,4 @@ def ingest_py_document(
         parser=LanguageParser(language="python"),
     )
     python_docs = loader.load()
-    return [PyDocsObject(doc) for doc in python_docs]
+    return [], [], [], [PyDocsObject(doc) for doc in python_docs]

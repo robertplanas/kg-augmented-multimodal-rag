@@ -156,11 +156,12 @@ def generate_database_and_retriever(
     return retriever
 
 
-def populate_database(retriever, text_objs, images_obj, tables_obj):
+def populate_database(retriever, text_objs, images_obj, tables_obj, code_objs):
     LOGGER.info("Adding data to persistent db")
     add_to_retriever(retriever, "doc_id", text_objs, "text", "text")
     add_to_retriever(retriever, "doc_id", tables_obj, "markdown", "table")
     add_to_retriever(retriever, "doc_id", images_obj, "base64", "image")
+    add_to_retriever(retriever, "doc_id", code_objs, "content", "code")
 
     LOGGER.info("All data persisted to Local Database")
     return retriever

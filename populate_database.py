@@ -10,7 +10,7 @@ from utils.summarize import summarize_objects
 
 
 LOGGER = logging.getLogger(__name__)
-SUPPORTED_EXTENSIONS: Tuple[str, ...] = ("pdf", "ipynb")
+SUPPORTED_EXTENSIONS: Tuple[str, ...] = ("pdf", "ipynb", "py")
 
 
 def parse_args() -> argparse.Namespace:
@@ -29,6 +29,32 @@ def parse_args() -> argparse.Namespace:
         default="./localdb",
         help="Folder where the DB will be stored.",
     )
+    parser.add_argument(
+        "--summary_provider",
+        type=str,
+        default=None,
+        help=(
+            "Summary LLM provider override (e.g., ollama, openai, google). "
+            "If omitted, uses SUMMARY_LLM_PROVIDER or default."
+        ),
+    )
+    parser.add_argument(
+        "--summary_model",
+        type=str,
+        default=None,
+        help=(
+            "Summary LLM model override. If omitted, uses SUMMARY_LLM_MODEL or default."
+        ),
+    )
+    parser.add_argument(
+        "--summary_max_workers",
+        type=int,
+        default=None,
+        help=(
+            "Summary worker count override. "
+            "If omitted, uses SUMMARY_LLM_MAX_WORKERS or default."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -43,15 +69,25 @@ def process_documents(documents: List[str]):
     all_texts = []
     all_tables = []
     all_images = []
+    all_codes = []
 
     for doc in documents:
         LOGGER.info("Parsing document: %s", doc)
-        text_objs, table_objs, image_objs = ingest_document(doc)
+        text_objs, table_objs, image_objs, code_objs = ingest_document(doc)
+        LOGGER.info(
+            "Parsed %d text objects, %d table objects, %d image objects, and %d code objects from %s",
+            len(text_objs),
+            len(table_objs),
+            len(image_objs),
+            len(code_objs),
+            doc,
+        )
         all_texts.extend(text_objs)
         all_tables.extend(table_objs)
         all_images.extend(image_objs)
+        all_codes.extend(code_objs)
 
-    return all_texts, all_images, all_tables
+    return all_texts, all_images, all_tables, all_codes
 
 
 def main() -> None:
@@ -69,18 +105,30 @@ def main() -> None:
 
     LOGGER.info("Parsing supported documents in %s", folder)
     all_documents = get_documents(str(folder))
-    all_texts, all_images, all_tables = process_documents(all_documents)
+    all_texts, all_images, all_tables, all_codes = process_documents(all_documents)
 
     LOGGER.info("Generating descriptions and summaries for objects")
-    all_texts, all_images, all_tables = summarize_objects(
-        all_texts, all_images, all_tables
+    all_texts, all_images, all_tables, all_codes = summarize_objects(
+        all_texts,
+        all_images,
+        all_tables,
+        all_codes,
+        model_name=args.summary_model,
+        provider=args.summary_provider,
+        max_workers=args.summary_max_workers,
     )
 
     LOGGER.info("Generating retriever and DB")
     retriever = generate_database_and_retriever(main_folder=args.data_base)
 
     LOGGER.info("Populating DB")
-    retriever = populate_database(retriever, all_texts, all_images, all_tables)
+    retriever = populate_database(
+        retriever,
+        all_texts,
+        all_images,
+        all_tables,
+        all_codes,
+    )
 
     LOGGER.info("Successfully populated the DB")
 
