@@ -11,6 +11,7 @@ from utils.database_utils import generate_database_and_retriever
 from utils.knowledge_graph import (
     convert_to_graph_elements_pipeline,
     fetch_existing_neo4j_nodes,
+    parse_document_to_dict,
 )
 from utils.node_standarization import (
     apply_representatives_to_relationships,
@@ -168,6 +169,14 @@ def parse_args() -> argparse.Namespace:
         default="neo4j",
         help="Neo4j database name.",
     )
+    parser.add_argument(
+        "--update_neo4j",
+        action="store_true",
+        help=(
+            "Update Neo4j with cleaned KG relationships and provenance edges "
+            "(entity->document and document->file)."
+        ),
+    )
 
     parser.add_argument(
         "--raw_output_file",
@@ -190,8 +199,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output_file",
         type=str,
-        default=None,
-        help="Optional Path to store final cleaned relationships.",
+        default="graph_clean_data.pkl",
+        help="Path to store final cleaned relationships.",
     )
 
     return parser.parse_args()
@@ -284,6 +293,151 @@ def _get_existing_nodes_for_reuse(args: argparse.Namespace):
     )
     LOGGER.info("Fetched %d existing Neo4j nodes for reuse.", len(existing_nodes))
     return existing_nodes
+
+
+def _sanitize_cypher_identifier(value: str, fallback: str) -> str:
+    safe_value = "".join(c for c in str(value or "") if c.isalnum() or c == "_")
+    return safe_value or fallback
+
+
+def _document_file(document_id, documents_dict):
+    document_payload = documents_dict.get(document_id)
+    if document_payload is None:
+        return "document", "unknown_file"
+
+    document = parse_document_to_dict(document_payload)
+    document_type = document.get("type", "document")
+    metadata = document.get("metadata", {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+    source = metadata.get("filename", "unknown_file")
+    return str(document_type), str(source)
+
+
+def _add_triplet_to_graph(
+    driver,
+    database: str,
+    head,
+    tail,
+    relation,
+    confidence=1,
+    head_type="Entity",
+    tail_type="Entity",
+    head_desc=None,
+    tail_desc=None,
+):
+    safe_head_type = _sanitize_cypher_identifier(head_type, "Entity")
+    safe_tail_type = _sanitize_cypher_identifier(tail_type, "Entity")
+    safe_relation = _sanitize_cypher_identifier(relation, "RELATED_TO")
+
+    query = f"""
+        MERGE (h:{safe_head_type} {{name: $head_name}})
+        ON CREATE SET h.description = $head_desc
+        ON MATCH SET h.description = $head_desc
+
+        MERGE (t:{safe_tail_type} {{name: $tail_name}})
+        ON CREATE SET t.description = $tail_desc
+        ON MATCH SET t.description = $tail_desc
+
+        MERGE (h)-[r:{safe_relation}]->(t)
+        ON CREATE SET r.confidence = $conf
+        ON MATCH SET r.confidence = $conf
+        RETURN h.name, type(r), t.name
+    """
+
+    driver.execute_query(
+        query,
+        head_name=str(head),
+        tail_name=str(tail),
+        head_desc=head_desc,
+        tail_desc=tail_desc,
+        conf=float(confidence),
+        database_=database,
+    )
+
+
+def _update_neo4j_graph(args: argparse.Namespace, graph_clean, documents_dict) -> None:
+    if not args.update_neo4j:
+        return
+
+    password = args.neo4j_password or os.getenv("NEO4J_PASSWORD")
+    if not password:
+        raise ValueError(
+            "--update_neo4j requires --neo4j_password or NEO4J_PASSWORD env var."
+        )
+
+    try:
+        from neo4j import GraphDatabase
+    except ImportError as exc:
+        raise RuntimeError(
+            "Neo4j driver is not available. Install dependency `neo4j`."
+        ) from exc
+
+    LOGGER.info(
+        "Updating Neo4j graph %s (database=%s) with cleaned relationships.",
+        args.neo4j_uri,
+        args.neo4j_database,
+    )
+
+    entity_relationship_count = 0
+    provenance_relationship_count = 0
+    with GraphDatabase.driver(args.neo4j_uri, auth=(args.neo4j_user, password)) as driver:
+        for document_id, relationships in graph_clean.items():
+            document_type, source = _document_file(document_id, documents_dict)
+            _add_triplet_to_graph(
+                driver,
+                database=args.neo4j_database,
+                head=document_id,
+                tail=source,
+                relation="BELONGS_TO",
+                confidence=1,
+                head_type=document_type,
+                tail_type="file",
+            )
+            provenance_relationship_count += 1
+
+            for relationship in relationships:
+                _add_triplet_to_graph(
+                    driver,
+                    database=args.neo4j_database,
+                    head=relationship.head,
+                    tail=document_id,
+                    relation="BELONGS_TO",
+                    confidence=1,
+                    head_type=relationship.head_type,
+                    tail_type=document_type,
+                )
+                _add_triplet_to_graph(
+                    driver,
+                    database=args.neo4j_database,
+                    head=relationship.tail,
+                    tail=document_id,
+                    relation="BELONGS_TO",
+                    confidence=1,
+                    head_type=relationship.tail_type,
+                    tail_type=document_type,
+                )
+                provenance_relationship_count += 2
+
+                _add_triplet_to_graph(
+                    driver,
+                    database=args.neo4j_database,
+                    head=relationship.head,
+                    tail=relationship.tail,
+                    relation=relationship.relation,
+                    confidence=getattr(relationship, "confidence", 1),
+                    head_type=getattr(relationship, "head_type", "Entity"),
+                    tail_type=getattr(relationship, "tail_type", "Entity"),
+                    head_desc=getattr(relationship, "head_description", None),
+                    tail_desc=getattr(relationship, "tail_description", None),
+                )
+                entity_relationship_count += 1
+
+    LOGGER.info(
+        "Neo4j update complete: %d entity relationships and %d provenance relationships.",
+        entity_relationship_count,
+        provenance_relationship_count,
+    )
 
 
 async def _run_kg_pipeline() -> None:
@@ -405,8 +559,11 @@ async def _run_kg_pipeline() -> None:
         representatives,
     )
 
-    _save_pickle(graph_clean, args.output_file)
-    LOGGER.info("Saved cleaned graph data to %s", args.output_file)
+    if args.output_file:
+        _save_pickle(graph_clean, args.output_file)
+        LOGGER.info("Saved cleaned graph data to %s", args.output_file)
+
+    _update_neo4j_graph(args, graph_clean, documents_dict)
 
 
 def main() -> None:
