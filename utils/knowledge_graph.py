@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -73,18 +73,22 @@ def _get_thread_chains(
     model_name_text,
     model_name_table,
     model_name_image,
+    model_name_code,
     provider_text,
     provider_table,
     provider_image,
+    provider_code,
     temperature,
 ):
     key = (
         model_name_text,
         model_name_table,
         model_name_image,
+        model_name_code,
         provider_text,
         provider_table,
         provider_image,
+        provider_code,
         temperature,
     )
     if getattr(_THREAD_LOCAL, "kg_chain_key", None) != key:
@@ -103,8 +107,18 @@ def _get_thread_chains(
             provider=provider_image,
             temperature=temperature,
         )
+        _THREAD_LOCAL.chain_code = chain_for_code(
+            model_name=model_name_code,
+            provider=provider_code,
+            temperature=temperature,
+        )
         _THREAD_LOCAL.kg_chain_key = key
-    return _THREAD_LOCAL.chain_text, _THREAD_LOCAL.chain_table, _THREAD_LOCAL.chain_image
+    return (
+        _THREAD_LOCAL.chain_text,
+        _THREAD_LOCAL.chain_table,
+        _THREAD_LOCAL.chain_image,
+        _THREAD_LOCAL.chain_code,
+    )
 
 
 def chain_for_text(model_name="gemma3:12b", provider="ollama", temperature=0, llm=None):
@@ -247,19 +261,55 @@ def chain_for_images(
     return prompt | llm | parser
 
 
+def chain_for_code(model_name="gemma3:12b", provider="ollama", temperature=0, llm=None):
+    llm = _resolve_llm(
+        llm=llm,
+        model_name=model_name,
+        provider=provider,
+        temperature=temperature,
+    )
+    parser = PydanticOutputParser(pydantic_object=KnowledgeGraph)
+
+    system_instruction = (
+        "You are an expert software architect and Knowledge Graph Engineer. "
+        "Your task is to extract explicit, code-grounded relationships from source code.\n\n"
+        "CODE EXTRACTION RULES:\n"
+        "1. Prefer concrete software entities such as classes, functions, modules, files, APIs, databases, and services.\n"
+        "2. Use specific predicates in SCREAMING_SNAKE_CASE such as CALLS, IMPORTS, INHERITS_FROM, IMPLEMENTS, RETURNS, WRITES_TO.\n"
+        "3. Extract only relationships supported by the provided code or context; do not infer external behavior.\n"
+        "4. Normalize names to stable identifiers when possible (e.g., module.Class.method).\n"
+        "5. Keep relationships atomic and preserve directional flow.\n\n"
+        "{format_instructions}"
+    )
+
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_instruction),
+            ("human", "Background Context for the following code: {context}"),
+            ("human", "Code Description: {description}"),
+            ("human", "Code Input:\n{input}"),
+        ]
+    ).partial(format_instructions=parser.get_format_instructions())
+
+    return prompt | llm | parser
+
+
 async def aextract_relationships_from_element(
     element,
     element_id,
     model_name_text="gemma3:12b",
     model_name_table="gemma3:12b",
     model_name_image="gemma3:12b",
+    model_name_code="gemma3:12b",
     provider_text="ollama",
     provider_table="ollama",
     provider_image="ollama",
+    provider_code="ollama",
     temperature=0,
     chain_text=None,
     chain_table=None,
     chain_image=None,
+    chain_code=None,
 ):
 
     type_ = element.get("type", None)
@@ -320,6 +370,18 @@ async def aextract_relationships_from_element(
         response = await chain.ainvoke({"input": content})
         return response.relationships
 
+    elif type_ in {"code", "notebook_code", "python"}:
+        LOGGER.info("Extracting relationships from code element: {}".format(element_id))
+        chain = chain_code or chain_for_code(
+            model_name=model_name_code,
+            provider=provider_code,
+            temperature=temperature,
+        )
+        response = await chain.ainvoke(
+            {"input": content, "description": description, "context": context}
+        )
+        return response.relationships
+
     else:
         LOGGER.warning("Unknown element type: {}".format(type_))
         return None
@@ -343,6 +405,7 @@ def extract_relationships_from_element(
     chain_text,
     chain_table,
     chain_image,
+    chain_code,
 ):
     type_ = element.get("type", None)
     content = element.get("content", None)
@@ -369,6 +432,11 @@ def extract_relationships_from_element(
     if type_ == "text":
         response = chain_text.invoke({"input": content})
         return response.relationships
+    if type_ in {"code", "notebook_code", "python"}:
+        response = chain_code.invoke(
+            {"input": content, "description": description, "context": context}
+        )
+        return response.relationships
 
     LOGGER.warning("Unknown element type: %s", type_)
     return None
@@ -383,16 +451,19 @@ def _thread_worker(
     provider_text,
     provider_table,
     provider_image,
+    provider_code,
     temperature,
 ):
     parsed_doc = parse_document_to_dict(doc)
-    chain_text, chain_table, chain_image = _get_thread_chains(
+    chain_text, chain_table, chain_image, chain_code = _get_thread_chains(
         model_name_text=model_name_text,
         model_name_table=model_name_table,
         model_name_image=model_name_image,
+        model_name_code=model_name_text,
         provider_text=provider_text,
         provider_table=provider_table,
         provider_image=provider_image,
+        provider_code=provider_code,
         temperature=temperature,
     )
     relationships = extract_relationships_from_element(
@@ -401,6 +472,7 @@ def _thread_worker(
         chain_text=chain_text,
         chain_table=chain_table,
         chain_image=chain_image,
+        chain_code=chain_code,
     )
     return doc_id, relationships
 
@@ -410,9 +482,11 @@ def convert_to_graph_elements_pipeline_threaded(
     model_name_text="gemma3:12b",
     model_name_table="gemma3:12b",
     model_name_image="gemma3:12b",
+    model_name_code="gemma3:12b",
     provider_text="ollama",
     provider_table="ollama",
     provider_image="ollama",
+    provider_code="ollama",
     temperature=0,
     max_workers=5,
 ):
@@ -429,6 +503,7 @@ def convert_to_graph_elements_pipeline_threaded(
                 provider_text,
                 provider_table,
                 provider_image,
+                provider_code,
                 temperature,
             )
             for doc_id, doc in documents_dict.items()
@@ -447,9 +522,11 @@ async def convert_to_graph_elements_pipeline(
     model_name_text="gemma3:12b",
     model_name_table="gemma3:12b",
     model_name_image="gemma3:12b",
+    model_name_code="gemma3:12b",
     provider_text="ollama",
     provider_table="ollama",
     provider_image="ollama",
+    provider_code="ollama",
     temperature=0,
     max_concurrency=5,
     execution_mode="async",
@@ -461,9 +538,11 @@ async def convert_to_graph_elements_pipeline(
             model_name_text,
             model_name_table,
             model_name_image,
+            model_name_code,
             provider_text,
             provider_table,
             provider_image,
+            provider_code,
             temperature,
             max_concurrency,
         )
@@ -483,6 +562,11 @@ async def convert_to_graph_elements_pipeline(
         provider=provider_image,
         temperature=temperature,
     )
+    chain_code = chain_for_code(
+        model_name=model_name_code,
+        provider=provider_code,
+        temperature=temperature,
+    )
 
     sem = asyncio.Semaphore(max_concurrency)
 
@@ -497,13 +581,16 @@ async def convert_to_graph_elements_pipeline(
                 model_name_text,
                 model_name_table,
                 model_name_image,
+                model_name_code,
                 provider_text,
                 provider_table,
                 provider_image,
+                provider_code,
                 temperature,
                 chain_text,
                 chain_table,
                 chain_image,
+                chain_code,
             )
             return doc_id, relationship
 
@@ -521,3 +608,41 @@ async def convert_to_graph_elements_pipeline(
         for doc_id, relationships in results
         if relationships is not None
     }
+
+
+def fetch_existing_neo4j_nodes(
+    uri: str,
+    auth: tuple[str, str],
+    database: str = "neo4j",
+) -> List[Dict[str, Any]]:
+    """Fetch existing graph nodes from Neo4j as lightweight records."""
+    try:
+        from neo4j import GraphDatabase
+    except ImportError as exc:
+        raise RuntimeError(
+            "Neo4j driver is not available. Install dependency `neo4j`."
+        ) from exc
+
+    query = """
+    MATCH (n)
+    WHERE n.name IS NOT NULL
+    RETURN n.name AS name, n.description AS description, labels(n) AS labels
+    """
+
+    nodes: List[Dict[str, Any]] = []
+    with GraphDatabase.driver(uri, auth=auth) as driver:
+        with driver.session(database=database) as session:
+            records = session.run(query)
+            for record in records:
+                labels = record.get("labels") or []
+                name = record.get("name")
+                if not name or not labels:
+                    continue
+                nodes.append(
+                    {
+                        "name": str(name),
+                        "type": str(labels[0]),
+                        "description": str(record.get("description") or ""),
+                    }
+                )
+    return nodes

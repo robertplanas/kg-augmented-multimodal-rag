@@ -15,7 +15,20 @@ class EmbeddingModel:
         self.provider = provider.lower()
         self.model = self._build_model(**kwargs)
 
+    def _normalize_provider_kwargs(self, kwargs):
+        normalized_kwargs = dict(kwargs)
+        if self.provider == "openai" and "api_key" in normalized_kwargs:
+            normalized_kwargs.setdefault(
+                "openai_api_key", normalized_kwargs.pop("api_key")
+            )
+        elif self.provider in {"gemini", "google"} and "api_key" in normalized_kwargs:
+            normalized_kwargs.setdefault(
+                "google_api_key", normalized_kwargs.pop("api_key")
+            )
+        return normalized_kwargs
+
     def _build_model(self, **kwargs):
+        kwargs = self._normalize_provider_kwargs(kwargs)
         if self.provider == "ollama":
             return OllamaEmbeddings(model=self.model_name, **kwargs)
 
@@ -54,7 +67,20 @@ class LLMModel:
         self.provider = provider.lower()
         self.model = self._build_model(**kwargs)
 
+    def _normalize_provider_kwargs(self, kwargs):
+        normalized_kwargs = dict(kwargs)
+        if self.provider == "openai" and "api_key" in normalized_kwargs:
+            normalized_kwargs.setdefault(
+                "openai_api_key", normalized_kwargs.pop("api_key")
+            )
+        elif self.provider in {"gemini", "google"} and "api_key" in normalized_kwargs:
+            normalized_kwargs.setdefault(
+                "google_api_key", normalized_kwargs.pop("api_key")
+            )
+        return normalized_kwargs
+
     def _build_model(self, **kwargs):
+        kwargs = self._normalize_provider_kwargs(kwargs)
         if self.provider == "ollama":
             return ChatOllama(model=self.model_name, **kwargs)
 
