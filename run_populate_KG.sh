@@ -4,7 +4,7 @@ python populate_KG.py \
   -db ./localdb \
   --kg_provider openai \
   --kg_model gpt-5-nano \
-  --kg_max_workers 10 \
+  --kg_max_workers 1 \
   --node_translate_provider openai \
   --node_translate_model gpt-5-nano \
   --node_translate_max_workers 10 \

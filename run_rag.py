@@ -2,7 +2,7 @@ import argparse
 import json
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -30,14 +30,16 @@ def _load_project_env() -> Path:
     load_dotenv(dotenv_path=project_root / ".venv" / ".env")
     return project_root
 
+
 RAG_SYSTEM_PROMPT = """
 You are an expert analytical assistant. Your task is to provide a comprehensive and accurate answer to the user's query based strictly on the provided context.
 INSTRUCTIONS:
-1. Synthesize the answer by starting with the specific facts (<Specific_Documents> and <Visual_Context>).
-2. Use the <Entity_Nodes> to clarify any relationships between actors or concepts.
-3. Weave in the <Mid_Level_Context> and <Global_Context> to provide background, explain the "why", or fill in gaps if the specific documents are sparse.
-4. If the different contexts contradict each other, prioritize <Specific_Documents> for exact facts, but note the discrepancy in your answer.
-5. Do not include information that is not present in the contexts.
+1. Understand what the user might be asking to provide the most possible accurate answer.
+2. Before answering:
+    - Use the <Entity_Nodes> to clarify any relationships between actors or concepts.
+    - Weave in the <Mid_Level_Context> and <Global_Context> to provide background, explain the "why", or fill in gaps if the specific documents are sparse.
+    - If the different contexts contradict each other, prioritize <Specific_Documents> for exact facts.
+3. Answer the user with a detailed, accurate and, if possible, brief answer.
 """
 
 RAG_USER_PROMPT = """
@@ -262,7 +264,9 @@ def _resolve_model_config(
 ):
     _load_project_env()
 
-    resolved_provider = (provider or os.getenv(provider_env) or default_provider).lower()
+    resolved_provider = (
+        provider or os.getenv(provider_env) or default_provider
+    ).lower()
     resolved_model_name = model_name or os.getenv(model_env) or default_model
     llm_kwargs = _resolve_provider_api_kwargs(resolved_provider, step_name)
 
@@ -424,7 +428,9 @@ def get_graph_context(driver, database: str, retrieved_nodes):
     return summary_block
 
 
-def summarize_graph_context(nodes_context: str, model_name: str, provider: str, **llm_kwargs):
+def summarize_graph_context(
+    nodes_context: str, model_name: str, provider: str, **llm_kwargs
+):
     if not nodes_context.strip():
         return "No entity context retrieved."
 
@@ -432,7 +438,9 @@ def summarize_graph_context(nodes_context: str, model_name: str, provider: str, 
         SystemMessage(content=GRAPH_SUMMARY_SYSTEM_PROMPT),
         HumanMessage(content=nodes_context),
     ]
-    return _invoke_model(model_name=model_name, provider=provider, messages=messages, **llm_kwargs)
+    return _invoke_model(
+        model_name=model_name, provider=provider, messages=messages, **llm_kwargs
+    )
 
 
 def retrieve_context_for_nodes(
@@ -521,26 +529,45 @@ def _apply_top_k(retriever, top_k: int | None):
 
 
 def _build_retrievers(args: argparse.Namespace):
+    LOGGER.info(
+        "[Startup] Building retrievers with embedding provider='%s', model='%s'",
+        args.embedding_provider,
+        args.embedding_model,
+    )
+
     regular_rag_retriever = generate_database_and_retriever(
         main_folder=args.data_base,
         embedding_provider=args.embedding_provider,
         embedding_model_name=args.embedding_model,
     )
+    LOGGER.info("[Startup] Regular retriever ready from %s", args.data_base)
+
     nodes_retriever = generate_database_and_retriever(
         main_folder=args.node_db,
         db_name="node_db",
         embedding_provider=args.embedding_provider,
         embedding_model_name=args.embedding_model,
     )
+    LOGGER.info("[Startup] Node retriever ready from %s", args.node_db)
+
     mid_level_retriever = generate_database_and_retriever(
         main_folder=args.mid_communities_db,
         embedding_provider=args.embedding_provider,
         embedding_model_name=args.embedding_model,
     )
+    LOGGER.info(
+        "[Startup] Mid-level communities retriever ready from %s",
+        args.mid_communities_db,
+    )
+
     global_level_retriever = generate_database_and_retriever(
         main_folder=args.global_communities_db,
         embedding_provider=args.embedding_provider,
         embedding_model_name=args.embedding_model,
+    )
+    LOGGER.info(
+        "[Startup] Global communities retriever ready from %s",
+        args.global_communities_db,
     )
 
     return {
@@ -552,12 +579,22 @@ def _build_retrievers(args: argparse.Namespace):
 
 
 def _retrieve_all(retrievers: dict, question: str):
+    LOGGER.info("[Query] Step 1/6: Retrieving context in parallel")
+
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = {
-            key: executor.submit(retriever.invoke, question)
+            executor.submit(retriever.invoke, question): key
             for key, retriever in retrievers.items()
         }
-        outputs = {key: future.result() for key, future in futures.items()}
+        outputs = {}
+        for future in as_completed(futures):
+            key = futures[future]
+            try:
+                outputs[key] = future.result()
+                LOGGER.info("[Query] Retrieved '%s' context", key)
+            except Exception:
+                LOGGER.exception("Retriever '%s' failed", key)
+                raise
 
     return outputs
 
@@ -573,11 +610,16 @@ def _answer_question(
     rag_provider, rag_model_name, rag_kwargs = rag_model_config
     graph_provider, graph_model_name, graph_kwargs = graph_model_config
 
+    LOGGER.info("[Query] Starting pipeline for question: %s", question)
+
     retrieved = _retrieve_all(retrievers, question)
 
+    LOGGER.info("[Query] Step 2/6: Parsing specific documents context")
     regular_rag_documents = parse_documents(retrieved["regular"])
+    LOGGER.info("[Query] Step 3/6: Parsing community summaries")
     summaries_mid_level_communities = parse_communities(retrieved["mid"])
     summaries_global_level_communities = parse_communities(retrieved["global"])
+    LOGGER.info("[Query] Step 4/6: Building graph-based entity context")
     nodes_context = retrieve_context_for_nodes(
         nodes_retrieved=retrieved["nodes"],
         neo4j_uri=args.neo4j_uri,
@@ -588,6 +630,7 @@ def _answer_question(
         **graph_kwargs,
     )
 
+    LOGGER.info("[Query] Step 5/6: Building multimodal prompt")
     prompt_payload = {
         "user_query": question,
         "regular_rag_documents": regular_rag_documents,
@@ -598,17 +641,27 @@ def _answer_question(
     messages = build_prompt(prompt_payload)
 
     if args.show_context:
+        LOGGER.info("[Query] show_context enabled: printing retrieved context blocks")
         print("\n[Global Context]\n", summaries_global_level_communities)
         print("\n[Mid-Level Context]\n", summaries_mid_level_communities)
         print("\n[Entity Nodes]\n", nodes_context)
-        print("\n[Specific Documents]\n", "\n".join(regular_rag_documents.get("texts", [])))
+        print(
+            "\n[Specific Documents]\n",
+            "\n".join(regular_rag_documents.get("texts", [])),
+        )
 
+    LOGGER.info(
+        "[Query] Step 6/6: Invoking answer model provider='%s', model='%s'",
+        rag_provider,
+        rag_model_name,
+    )
     result = _invoke_model(
         model_name=rag_model_name,
         provider=rag_provider,
         messages=messages,
         **rag_kwargs,
     )
+    LOGGER.info("[Query] Pipeline completed")
     return result
 
 
@@ -619,6 +672,7 @@ def _interactive_loop(
     graph_model_config,
     neo4j_auth,
 ):
+    LOGGER.info("[Mode] Entering interactive mode")
     print("Interactive GraphRAG CLI")
     print("Type your question and press Enter. Type 'exit' or 'quit' to stop.\n")
 
@@ -633,6 +687,7 @@ def _interactive_loop(
             continue
 
         if query.lower() in {"exit", "quit", ":q"}:
+            LOGGER.info("[Mode] Exit command received; stopping interactive mode")
             return
 
         try:
@@ -651,11 +706,13 @@ def _interactive_loop(
 
 
 def _run_rag_cli() -> None:
+    LOGGER.info("[Startup] Parsing CLI arguments")
     args = parse_args()
 
     if args.top_k is not None and args.top_k < 1:
         raise ValueError("--top_k must be >= 1")
 
+    LOGGER.info("[Startup] Resolving RAG model configuration")
     rag_model_config = _resolve_model_config(
         provider=args.rag_provider,
         model_name=args.rag_model,
@@ -665,6 +722,7 @@ def _run_rag_cli() -> None:
         default_model="gemma3:12b",
         step_name="RAG generation",
     )
+    LOGGER.info("[Startup] Resolving graph-summary model configuration")
     graph_model_config = _resolve_model_config(
         provider=args.graph_summary_provider,
         model_name=args.graph_summary_model,
@@ -674,11 +732,13 @@ def _run_rag_cli() -> None:
         default_model="gemma3:latest",
         step_name="graph summary",
     )
+    LOGGER.info("[Startup] Resolving Neo4j credentials")
     neo4j_auth = _resolve_neo4j_auth(args)
 
     retrievers = _build_retrievers(args)
 
     if args.query:
+        LOGGER.info("[Mode] Running single-query mode")
         answer = _answer_question(
             question=args.query,
             retrievers=retrievers,
@@ -690,6 +750,7 @@ def _run_rag_cli() -> None:
         print(answer)
         return
 
+    LOGGER.info("[Mode] Starting interactive mode")
     _interactive_loop(
         args=args,
         retrievers=retrievers,

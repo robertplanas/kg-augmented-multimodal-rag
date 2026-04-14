@@ -6,16 +6,15 @@ python run_rag.py \
   --mid_communities_db ./localdb/mid_communities \
   --global_communities_db ./localdb/global_communities \
   --embedding_provider ollama \
-  --embedding_model embeddinggemma:latest \
+  --embedding_model embeddinexiggemma:latest \
   --rag_provider ollama \
-  --rag_model gemma3:12b \
+  --rag_model gemma4:e4b \
   --graph_summary_provider ollama \
-  --graph_summary_model gemma3:latest \
+  --graph_summary_model gemma4:e4b \
   --neo4j_uri bolt://localhost:7687 \
   --neo4j_user neo4j \
   --neo4j_database neo4j \
-  --top_k 5 \
-  "$@"
+  --top_k 5 
 
 # Optional flags:
 # --neo4j_password 123456789
