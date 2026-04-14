@@ -23,6 +23,13 @@ PROVIDER_API_KEY_ENV = {
     "gemini": "GOOGLE_API_KEY",
 }
 
+
+def _load_project_env() -> Path:
+    project_root = Path(__file__).resolve().parent
+    load_dotenv(dotenv_path=project_root / ".env")
+    load_dotenv(dotenv_path=project_root / ".venv" / ".env")
+    return project_root
+
 RAG_SYSTEM_PROMPT = """
 You are an expert analytical assistant. Your task is to provide a comprehensive and accurate answer to the user's query based strictly on the provided context.
 INSTRUCTIONS:
@@ -228,6 +235,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def _resolve_provider_api_kwargs(provider: str, step_name: str):
+    project_root = _load_project_env()
     resolved_provider = (provider or "ollama").lower()
     api_key_env = PROVIDER_API_KEY_ENV.get(resolved_provider)
     if not api_key_env:
@@ -239,7 +247,7 @@ def _resolve_provider_api_kwargs(provider: str, step_name: str):
 
     raise ValueError(
         f"Missing API key for {step_name} provider '{resolved_provider}'. "
-        f"Set {api_key_env} in your environment or in {Path(__file__).resolve().parent / '.env'}."
+        f"Set {api_key_env} in your environment or in {project_root / '.env'}."
     )
 
 
@@ -252,8 +260,7 @@ def _resolve_model_config(
     default_model: str,
     step_name: str,
 ):
-    project_root = Path(__file__).resolve().parent
-    load_dotenv(dotenv_path=project_root / ".env")
+    _load_project_env()
 
     resolved_provider = (provider or os.getenv(provider_env) or default_provider).lower()
     resolved_model_name = model_name or os.getenv(model_env) or default_model
@@ -263,6 +270,7 @@ def _resolve_model_config(
 
 
 def _resolve_neo4j_auth(args: argparse.Namespace) -> tuple[str, str]:
+    _load_project_env()
     password = args.neo4j_password or os.getenv("NEO4J_PASSWORD")
     if not password:
         raise ValueError(

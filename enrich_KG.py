@@ -29,6 +29,13 @@ PROVIDER_API_KEY_ENV = {
     "gemini": "GOOGLE_API_KEY",
 }
 
+
+def _load_project_env() -> Path:
+    project_root = Path(__file__).resolve().parent
+    load_dotenv(dotenv_path=project_root / ".env")
+    load_dotenv(dotenv_path=project_root / ".venv" / ".env")
+    return project_root
+
 SYSTEM_INSTRUCTION = """
 You are an expert Graph Data Analyst. Your task is to synthesize information about a specific community of entities into a structured report.
 
@@ -187,6 +194,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def _resolve_provider_api_kwargs(provider: str, step_name: str):
+    project_root = _load_project_env()
     resolved_provider = (provider or "ollama").lower()
     api_key_env = PROVIDER_API_KEY_ENV.get(resolved_provider)
     if not api_key_env:
@@ -198,13 +206,12 @@ def _resolve_provider_api_kwargs(provider: str, step_name: str):
 
     raise ValueError(
         f"Missing API key for {step_name} provider '{resolved_provider}'. "
-        f"Set {api_key_env} in your environment or in {Path(__file__).resolve().parent / '.env'}."
+        f"Set {api_key_env} in your environment or in {project_root / '.env'}."
     )
 
 
 def _resolve_summary_config(provider, model_name, max_workers):
-    project_root = Path(__file__).resolve().parent
-    load_dotenv(dotenv_path=project_root / ".env")
+    _load_project_env()
 
     resolved_provider = (
         provider
@@ -246,6 +253,7 @@ def _resolve_summary_config(provider, model_name, max_workers):
 
 
 def _resolve_neo4j_auth(args: argparse.Namespace) -> tuple[str, str]:
+    _load_project_env()
     password = args.neo4j_password or os.getenv("NEO4J_PASSWORD")
     if not password:
         raise ValueError(

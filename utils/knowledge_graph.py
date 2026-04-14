@@ -1,4 +1,5 @@
-from typing import Any, Dict, List, Optional
+from collections import defaultdict
+from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -324,67 +325,76 @@ async def aextract_relationships_from_element(
         LOGGER.warning("No type found for element: {}".format(element_id))
         return None
 
-    if type_ == "table":
-        LOGGER.info(
-            "Extracting relationships from table element: {}".format(element_id)
-        )
-        chain = chain_table or chain_for_tables(
-            model_name=model_name_table,
-            provider=provider_table,
-            temperature=temperature,
-        )
-
-        response = await chain.ainvoke(
-            {"input": content, "description": description, "context": context}
-        )
-
-        LOGGER.info(
-            "Extracting relationships from description of table element: {}".format(
-                element_id
+    try:
+        if type_ == "table":
+            LOGGER.info(
+                "Extracting relationships from table element: {}".format(element_id)
             )
-        )
+            chain = chain_table or chain_for_tables(
+                model_name=model_name_table,
+                provider=provider_table,
+                temperature=temperature,
+            )
 
-        return response.relationships
+            response = await chain.ainvoke(
+                {"input": content, "description": description, "context": context}
+            )
 
-    elif type_ == "image":
-        LOGGER.info(
-            "Extracting relationships from image element: {}".format(element_id)
-        )
-        chain = chain_image or chain_for_images(
-            model_name=model_name_image,
-            provider=provider_image,
-            temperature=temperature,
-        )
-        response = await chain.ainvoke(
-            {"input": content, "description": description, "context": context}
-        )
-        return response.relationships
+            LOGGER.info(
+                "Extracting relationships from description of table element: {}".format(
+                    element_id
+                )
+            )
 
-    elif type_ == "text":
-        LOGGER.info("Extracting relationships from text element: {}".format(element_id))
-        chain = chain_text or chain_for_text(
-            model_name=model_name_text,
-            provider=provider_text,
-            temperature=temperature,
-        )
-        response = await chain.ainvoke({"input": content})
-        return response.relationships
+            return response.relationships
 
-    elif type_ in {"code", "notebook_code", "python"}:
-        LOGGER.info("Extracting relationships from code element: {}".format(element_id))
-        chain = chain_code or chain_for_code(
-            model_name=model_name_code,
-            provider=provider_code,
-            temperature=temperature,
-        )
-        response = await chain.ainvoke(
-            {"input": content, "description": description, "context": context}
-        )
-        return response.relationships
+        elif type_ == "image":
+            LOGGER.info(
+                "Extracting relationships from image element: {}".format(element_id)
+            )
+            chain = chain_image or chain_for_images(
+                model_name=model_name_image,
+                provider=provider_image,
+                temperature=temperature,
+            )
+            response = await chain.ainvoke(
+                {"input": content, "description": description, "context": context}
+            )
+            return response.relationships
 
-    else:
-        LOGGER.warning("Unknown element type: {}".format(type_))
-        return None
+        elif type_ == "text":
+            LOGGER.info("Extracting relationships from text element: {}".format(element_id))
+            chain = chain_text or chain_for_text(
+                model_name=model_name_text,
+                provider=provider_text,
+                temperature=temperature,
+            )
+            response = await chain.ainvoke({"input": content})
+            return response.relationships
+
+        elif type_ in {"code", "notebook_code", "python"}:
+            LOGGER.info("Extracting relationships from code element: {}".format(element_id))
+            chain = chain_code or chain_for_code(
+                model_name=model_name_code,
+                provider=provider_code,
+                temperature=temperature,
+            )
+            response = await chain.ainvoke(
+                {"input": content, "description": description, "context": context}
+            )
+            return response.relationships
+
+        else:
+            LOGGER.warning("Unknown element type: {}".format(type_))
+            return []
+    except Exception as exc:
+        LOGGER.warning(
+            "KG extraction failed for element=%s type=%s. Skipping element. Error: %s",
+            element_id,
+            type_,
+            exc,
+        )
+        return []
 
 
 def parse_document_to_dict(doc):
@@ -419,47 +429,57 @@ def extract_relationships_from_element(
         LOGGER.warning("No type found for element: %s", element_id)
         return None
 
-    if type_ == "table":
-        response = chain_table.invoke(
-            {"input": content, "description": description, "context": context}
+    try:
+        if type_ == "table":
+            response = chain_table.invoke(
+                {"input": content, "description": description, "context": context}
+            )
+            return response.relationships
+        if type_ == "image":
+            response = chain_image.invoke(
+                {"input": content, "description": description, "context": context}
+            )
+            return response.relationships
+        if type_ == "text":
+            response = chain_text.invoke({"input": content})
+            return response.relationships
+        if type_ in {"code", "notebook_code", "python"}:
+            response = chain_code.invoke(
+                {"input": content, "description": description, "context": context}
+            )
+            return response.relationships
+    except Exception as exc:
+        LOGGER.warning(
+            "KG extraction failed for element=%s type=%s. Skipping element. Error: %s",
+            element_id,
+            type_,
+            exc,
         )
-        return response.relationships
-    if type_ == "image":
-        response = chain_image.invoke(
-            {"input": content, "description": description, "context": context}
-        )
-        return response.relationships
-    if type_ == "text":
-        response = chain_text.invoke({"input": content})
-        return response.relationships
-    if type_ in {"code", "notebook_code", "python"}:
-        response = chain_code.invoke(
-            {"input": content, "description": description, "context": context}
-        )
-        return response.relationships
+        return []
 
     LOGGER.warning("Unknown element type: %s", type_)
-    return None
+    return []
 
 
 def _thread_worker(
     doc_id,
-    doc,
+    element_index,
+    element,
     model_name_text,
     model_name_table,
     model_name_image,
+    model_name_code,
     provider_text,
     provider_table,
     provider_image,
     provider_code,
     temperature,
 ):
-    parsed_doc = parse_document_to_dict(doc)
     chain_text, chain_table, chain_image, chain_code = _get_thread_chains(
         model_name_text=model_name_text,
         model_name_table=model_name_table,
         model_name_image=model_name_image,
-        model_name_code=model_name_text,
+        model_name_code=model_name_code,
         provider_text=provider_text,
         provider_table=provider_table,
         provider_image=provider_image,
@@ -467,14 +487,46 @@ def _thread_worker(
         temperature=temperature,
     )
     relationships = extract_relationships_from_element(
-        element=parsed_doc,
-        element_id=doc_id,
+        element=element,
+        element_id=f"{doc_id}::element::{element_index}",
         chain_text=chain_text,
         chain_table=chain_table,
         chain_image=chain_image,
         chain_code=chain_code,
     )
-    return doc_id, relationships
+    return doc_id, element_index, relationships
+
+
+def _expand_documents_to_elements(
+    documents_dict,
+) -> List[Tuple[str, int, Dict[str, Any]]]:
+    expanded: List[Tuple[str, int, Dict[str, Any]]] = []
+
+    for doc_id, doc in documents_dict.items():
+        parsed_doc = parse_document_to_dict(doc)
+        if not isinstance(parsed_doc, dict):
+            LOGGER.warning("Skipping doc %s: parsed payload is not a dict.", doc_id)
+            continue
+
+        parsed_elements = parsed_doc.get("elements")
+        if isinstance(parsed_elements, list) and parsed_elements:
+            added_any = False
+            for element_index, element in enumerate(parsed_elements):
+                if not isinstance(element, dict):
+                    LOGGER.warning(
+                        "Skipping non-dict element in doc %s at index %d.",
+                        doc_id,
+                        element_index,
+                    )
+                    continue
+                expanded.append((doc_id, element_index, element))
+                added_any = True
+            if added_any:
+                continue
+
+        expanded.append((doc_id, 0, parsed_doc))
+
+    return expanded
 
 
 def convert_to_graph_elements_pipeline_threaded(
@@ -490,29 +542,50 @@ def convert_to_graph_elements_pipeline_threaded(
     temperature=0,
     max_workers=5,
 ):
-    results = {}
+    expanded_elements = _expand_documents_to_elements(documents_dict)
+    grouped_results: Dict[str, List[Tuple[int, List[Relationship]]]] = defaultdict(list)
+
+    if not expanded_elements:
+        return {}
+
+    LOGGER.info(
+        "KG extraction (thread mode): %d documents expanded to %d elements using %d workers.",
+        len(documents_dict),
+        len(expanded_elements),
+        max_workers,
+    )
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [
             executor.submit(
                 _thread_worker,
                 doc_id,
-                doc,
+                element_index,
+                element,
                 model_name_text,
                 model_name_table,
                 model_name_image,
+                model_name_code,
                 provider_text,
                 provider_table,
                 provider_image,
                 provider_code,
                 temperature,
             )
-            for doc_id, doc in documents_dict.items()
+            for doc_id, element_index, element in expanded_elements
         ]
 
         for future in tqdm(as_completed(futures), total=len(futures)):
-            doc_id, relationships = future.result()
+            doc_id, element_index, relationships = future.result()
             if relationships is not None:
-                results[doc_id] = relationships
+                grouped_results[doc_id].append((element_index, relationships))
+
+    results: Dict[str, List[Relationship]] = {}
+    for doc_id, indexed_relationships in grouped_results.items():
+        merged_relationships: List[Relationship] = []
+        for _, relationships in sorted(indexed_relationships, key=lambda item: item[0]):
+            merged_relationships.extend(relationships)
+        results[doc_id] = merged_relationships
 
     return results
 
@@ -547,6 +620,17 @@ async def convert_to_graph_elements_pipeline(
             max_concurrency,
         )
 
+    expanded_elements = _expand_documents_to_elements(documents_dict)
+    if not expanded_elements:
+        return {}
+
+    LOGGER.info(
+        "KG extraction (async mode): %d documents expanded to %d elements with max_concurrency=%d.",
+        len(documents_dict),
+        len(expanded_elements),
+        max_concurrency,
+    )
+
     chain_text = chain_for_text(
         model_name=model_name_text,
         provider=provider_text,
@@ -570,14 +654,11 @@ async def convert_to_graph_elements_pipeline(
 
     sem = asyncio.Semaphore(max_concurrency)
 
-    async def throttled_extraction(doc_id, doc):
+    async def throttled_extraction(doc_id, element_index, element):
         async with sem:
-            # This task "holds" a spot until it returns
-
-            doc = parse_document_to_dict(doc)
             relationship = await aextract_relationships_from_element(
-                doc,
-                doc_id,
+                element,
+                f"{doc_id}::element::{element_index}",
                 model_name_text,
                 model_name_table,
                 model_name_image,
@@ -592,22 +673,31 @@ async def convert_to_graph_elements_pipeline(
                 chain_image,
                 chain_code,
             )
-            return doc_id, relationship
+            return doc_id, element_index, relationship
 
     # Create tasks using the throttled wrapper
     tasks = [
-        throttled_extraction(doc_id, doc) for doc_id, doc in documents_dict.items()
+        throttled_extraction(doc_id, element_index, element)
+        for doc_id, element_index, element in expanded_elements
     ]
 
     # Gather results
     results = await tqdm_asyncio.gather(*tasks)
 
-    # Filter out None values
-    return {
-        doc_id: relationships
-        for doc_id, relationships in results
-        if relationships is not None
-    }
+    grouped_results: Dict[str, List[Tuple[int, List[Relationship]]]] = defaultdict(list)
+    for doc_id, element_index, relationships in results:
+        if relationships is None:
+            continue
+        grouped_results[doc_id].append((element_index, relationships))
+
+    merged_by_document: Dict[str, List[Relationship]] = {}
+    for doc_id, indexed_relationships in grouped_results.items():
+        merged_relationships: List[Relationship] = []
+        for _, relationships in sorted(indexed_relationships, key=lambda item: item[0]):
+            merged_relationships.extend(relationships)
+        merged_by_document[doc_id] = merged_relationships
+
+    return merged_by_document
 
 
 def fetch_existing_neo4j_nodes(

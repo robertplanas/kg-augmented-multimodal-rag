@@ -32,6 +32,13 @@ PROVIDER_API_KEY_ENV = {
 }
 
 
+def _load_project_env() -> Path:
+    project_root = Path(__file__).resolve().parent
+    load_dotenv(dotenv_path=project_root / ".env")
+    load_dotenv(dotenv_path=project_root / ".venv" / ".env")
+    return project_root
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Populate KG")
     parser.add_argument(
@@ -126,6 +133,15 @@ def parse_args() -> argparse.Namespace:
         default="gemma3:12b",
         help="Model used to summarize representative node descriptions.",
     )
+    parser.add_argument(
+        "--node_description_max_workers",
+        type=int,
+        default=None,
+        help=(
+            "Worker count for representative node description summarization. "
+            "If omitted, uses NODE_DESCRIPTION_MAX_WORKERS or default."
+        ),
+    )
 
     parser.add_argument(
         "--group_threshold",
@@ -169,14 +185,6 @@ def parse_args() -> argparse.Namespace:
         default="neo4j",
         help="Neo4j database name.",
     )
-    parser.add_argument(
-        "--update_neo4j",
-        action="store_true",
-        help=(
-            "Update Neo4j with cleaned KG relationships and provenance edges "
-            "(entity->document and document->file)."
-        ),
-    )
 
     parser.add_argument(
         "--raw_output_file",
@@ -207,8 +215,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def _resolve_kg_config(provider, model_name, max_workers):
-    project_root = Path(__file__).resolve().parent
-    load_dotenv(dotenv_path=project_root / ".env")
+    project_root = _load_project_env()
 
     resolved_provider = (
         provider
@@ -249,6 +256,7 @@ def _resolve_kg_config(provider, model_name, max_workers):
 
 
 def _resolve_provider_api_kwargs(provider: str, step_name: str):
+    project_root = _load_project_env()
     resolved_provider = (provider or "ollama").lower()
     api_key_env = PROVIDER_API_KEY_ENV.get(resolved_provider)
     if not api_key_env:
@@ -260,7 +268,7 @@ def _resolve_provider_api_kwargs(provider: str, step_name: str):
 
     raise ValueError(
         f"Missing API key for {step_name} provider '{resolved_provider}'. "
-        f"Set {api_key_env} in your environment or in {Path(__file__).resolve().parent / '.env'}."
+        f"Set {api_key_env} in your environment or in {project_root / '.env'}."
     )
 
 
@@ -357,14 +365,10 @@ def _add_triplet_to_graph(
 
 
 def _update_neo4j_graph(args: argparse.Namespace, graph_clean, documents_dict) -> None:
-    if not args.update_neo4j:
-        return
 
     password = args.neo4j_password or os.getenv("NEO4J_PASSWORD")
     if not password:
-        raise ValueError(
-            "--update_neo4j requires --neo4j_password or NEO4J_PASSWORD env var."
-        )
+        raise ValueError("requires --neo4j_password or NEO4J_PASSWORD env var.")
 
     try:
         from neo4j import GraphDatabase
@@ -381,7 +385,9 @@ def _update_neo4j_graph(args: argparse.Namespace, graph_clean, documents_dict) -
 
     entity_relationship_count = 0
     provenance_relationship_count = 0
-    with GraphDatabase.driver(args.neo4j_uri, auth=(args.neo4j_user, password)) as driver:
+    with GraphDatabase.driver(
+        args.neo4j_uri, auth=(args.neo4j_user, password)
+    ) as driver:
         for document_id, relationships in graph_clean.items():
             document_type, source = _document_file(document_id, documents_dict)
             _add_triplet_to_graph(
@@ -449,6 +455,11 @@ async def _run_kg_pipeline() -> None:
         raise ValueError("--existing_node_threshold must be >= 0")
     if args.node_translate_batch_size < 1:
         raise ValueError("--node_translate_batch_size must be >= 1")
+    if (
+        args.node_description_max_workers is not None
+        and args.node_description_max_workers < 1
+    ):
+        raise ValueError("--node_description_max_workers must be >= 1")
 
     provider, model_name, max_workers = _resolve_kg_config(
         provider=args.kg_provider,
@@ -482,6 +493,7 @@ async def _run_kg_pipeline() -> None:
         provider_text=provider,
         provider_table=provider,
         provider_image=provider,
+        provider_code=provider,
         max_concurrency=max_workers,
         execution_mode="thread",
     )
@@ -551,6 +563,8 @@ async def _run_kg_pipeline() -> None:
         description_provider=args.node_description_provider,
         embedding_kwargs=node_embedding_kwargs,
         description_llm_kwargs=node_description_kwargs,
+        max_workers=args.node_description_max_workers,
+        execution_mode="thread",
     )
     LOGGER.info("Created %d representative nodes.", len(representatives))
 
@@ -568,6 +582,8 @@ async def _run_kg_pipeline() -> None:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(name)s %(asctime)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("openai").setLevel(logging.WARNING)
     asyncio.run(_run_kg_pipeline())
 
 

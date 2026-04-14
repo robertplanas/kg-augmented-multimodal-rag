@@ -144,6 +144,49 @@ def _get_thread_llm(model_name, provider, llm_kwargs):
     return _THREAD_LOCAL.translate_llm
 
 
+def _resolve_description_max_workers(max_workers: Optional[int]) -> int:
+    if max_workers is None:
+        env_workers = os.getenv("NODE_DESCRIPTION_MAX_WORKERS", "1")
+        try:
+            resolved_max_workers = int(env_workers)
+        except ValueError:
+            raise ValueError(
+                f"Invalid NODE_DESCRIPTION_MAX_WORKERS value: {env_workers}. Expected integer."
+            ) from None
+    else:
+        resolved_max_workers = max_workers
+
+    if resolved_max_workers < 1:
+        raise ValueError("description max_workers must be >= 1.")
+    return resolved_max_workers
+
+
+def _get_thread_description_chain(model_name, provider, llm_kwargs):
+    key = (model_name, provider, tuple(sorted(llm_kwargs.items())))
+    if getattr(_THREAD_LOCAL, "description_chain_key", None) != key:
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    "You are an expert Graph Data Analyst. Consolidate the provided node descriptions "
+                    "into one concise canonical description.",
+                ),
+                ("human", "Descriptions:\n{descriptions}"),
+            ]
+        )
+        llm = LLMModel(
+            model_name=model_name,
+            provider=provider,
+            temperature=0,
+            **llm_kwargs,
+        ).as_langchain_llm()
+        _THREAD_LOCAL.description_chain = (
+            prompt | llm.with_structured_output(DescriptionSummaryResponse)
+        )
+        _THREAD_LOCAL.description_chain_key = key
+    return _THREAD_LOCAL.description_chain
+
+
 def _translate_batch(texts: List[str], structured_llm):
     if not texts:
         return []
@@ -469,25 +512,11 @@ def _summarize_descriptions(
 ) -> str:
     if not descriptions:
         return ""
-
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                "You are an expert Graph Data Analyst. Consolidate the provided node descriptions "
-                "into one concise canonical description.",
-            ),
-            ("human", "Descriptions:\n{descriptions}"),
-        ]
-    )
-
-    llm = LLMModel(
+    chain = _get_thread_description_chain(
         model_name=model_name,
         provider=provider,
-        temperature=0,
-        **llm_kwargs,
-    ).as_langchain_llm()
-    chain = prompt | llm.with_structured_output(DescriptionSummaryResponse)
+        llm_kwargs=llm_kwargs,
+    )
 
     try:
         response = chain.invoke({"descriptions": "\n".join(descriptions)})
@@ -597,11 +626,14 @@ def build_representatives(
     description_provider: str = "ollama",
     embedding_kwargs: Optional[Dict[str, Any]] = None,
     description_llm_kwargs: Optional[Dict[str, Any]] = None,
+    max_workers: Optional[int] = None,
+    execution_mode: str = "thread",
 ) -> List[RepresentativeNodeResult]:
     """Build representative node descriptors for each group."""
 
     embedding_kwargs = embedding_kwargs or {}
     description_llm_kwargs = description_llm_kwargs or {}
+    max_workers = _resolve_description_max_workers(max_workers)
 
     existing_embedded_nodes = _build_existing_nodes_with_embeddings(
         existing_nodes or [],
@@ -610,8 +642,10 @@ def build_representatives(
         **embedding_kwargs,
     )
 
-    representatives: List[RepresentativeNodeResult] = []
-    for group_id, group_nodes in nodes_by_group.items():
+    def _build_group_representative(
+        group_id: str,
+        group_nodes: List[ExtractedNode],
+    ) -> RepresentativeNodeResult:
         existing_node = match_group_to_existing_nodes(
             group_nodes,
             existing_embedded_nodes,
@@ -619,16 +653,13 @@ def build_representatives(
         )
 
         if existing_node is not None:
-            representatives.append(
-                RepresentativeNodeResult(
-                    group_id=group_id,
-                    name=existing_node.name,
-                    type=existing_node.type,
-                    description=existing_node.description,
-                    mapping_node_ids=[n.node_id for n in group_nodes],
-                )
+            return RepresentativeNodeResult(
+                group_id=group_id,
+                name=existing_node.name,
+                type=existing_node.type,
+                description=existing_node.description,
+                mapping_node_ids=[n.node_id for n in group_nodes],
             )
-            continue
 
         metadata = aggregate_group_metadata(
             group_nodes,
@@ -636,15 +667,44 @@ def build_representatives(
             description_provider=description_provider,
             **description_llm_kwargs,
         )
-        representatives.append(
-            RepresentativeNodeResult(
-                group_id=group_id,
-                name=metadata["name"],
-                type=metadata["type"],
-                description=metadata["description"],
-                mapping_node_ids=[n.node_id for n in group_nodes],
-            )
+
+        return RepresentativeNodeResult(
+            group_id=group_id,
+            name=metadata["name"],
+            type=metadata["type"],
+            description=metadata["description"],
+            mapping_node_ids=[n.node_id for n in group_nodes],
         )
+
+    items = list(nodes_by_group.items())
+    if (
+        execution_mode != "thread"
+        or max_workers <= 1
+        or len(items) <= 1
+    ):
+        return [
+            _build_group_representative(group_id, group_nodes)
+            for group_id, group_nodes in items
+        ]
+
+    LOGGER.info(
+        "Building representative nodes for %d groups using %d workers.",
+        len(items),
+        max_workers,
+    )
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(_build_group_representative, group_id, group_nodes)
+            for group_id, group_nodes in items
+        ]
+        representatives: List[RepresentativeNodeResult] = []
+        for future in as_completed(futures):
+            representatives.append(future.result())
+
+    representative_order = {
+        group_id: index for index, (group_id, _) in enumerate(items)
+    }
+    representatives.sort(key=lambda item: representative_order.get(item.group_id, math.inf))
 
     return representatives
 
