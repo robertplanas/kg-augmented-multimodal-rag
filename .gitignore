@@ -212,3 +212,5 @@ neo4j/
 
 # Do not upload pkl
 *.pkl
+
+auxiliar/raw_gif/*

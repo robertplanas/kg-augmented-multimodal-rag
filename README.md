@@ -28,6 +28,7 @@ Run the pipeline in this exact order:
 - Persists summaries + raw payloads to a local multi-vector store.
 
 2. `populate_KG.py`
+- Initiate the database connection to neo4j via docker-compose (launch_database.py).
 - Reads ingested docstore payloads.
 - Extracts relationships from text/tables/images/code.
 - Translates + lemmatizes nodes.
