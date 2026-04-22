@@ -13,6 +13,14 @@ A local-first pipeline that combines:
 
 The project processes documents (`.pdf`, `.ipynb`, `.py`), stores multimodal chunks in Chroma/LocalFileStore, writes entity relationships to Neo4j, enriches graph context through community summaries, and uses all contexts during retrieval and generation.
 
+### RAG Demo
+<p align="center">
+
+  <img src="./auxiliar/edited_gif/demo_final_edited.webp" alt="run rag demo" width="80%" style="margin-right: 1%;" />
+
+</p>
+
+
 ## Run Order
 Run the pipeline in this exact order:
 
@@ -127,9 +135,9 @@ Common options:
 - `--summary_model`
 - `--summary_max_workers`
 
-### Demo Placeholder (Step 1)
+### Populate Database Demo
 <!-- Replace with your GIF path -->
-![populate_database demo](./docs/gifs/01-populate_database.gif)
+![populate_database demo](./auxiliar/edited_gif/demo1_edited.webp)
 
 ## Step 2: populate_KG
 Extract and canonicalize graph relationships from the ingested docstore, then push to Neo4j.
@@ -157,9 +165,16 @@ Useful options:
 - Reuse existing graph nodes: `--reuse_existing_nodes`
 - Artifacts: `--raw_output_file`, `--translated_output_file`, `--lemmatized_output_file`, `--output_file`
 
-### Demo Placeholder (Step 2)
-<!-- Replace with your GIF path -->
-![populate_KG demo](./docs/gifs/02-populate_KG.gif)
+### Populate KG Demo
+
+<p align="center">
+
+  <img src="./auxiliar/edited_gif/demo2_edited.webp" alt="populate_KG demo" width="48%" style="margin-right: 1%;" />
+
+  <img src="./auxiliar/edited_gif/demo3_edited.webp" alt="populate_KG graph" width="48%" />
+
+</p>
+
 
 ## Step 3: enrich_KG
 Run community detection + summarization and persist graph-derived retrievers.
@@ -184,9 +199,9 @@ Outputs retriever DBs (default):
 - `./localdb/mid_communities`
 - `./localdb/node_db`
 
-### Demo Placeholder (Step 3)
+### Enrich KG Demo
 <!-- Replace with your GIF path -->
-![enrich_KG demo](./docs/gifs/03-enrich_KG.gif)
+![enrich_KG demo](./auxiliar/edited_gif/demo4_edited.webp)
 
 ## Step 4: run_rag
 Launch the GraphRAG CLI that combines document context + graph context.
@@ -222,10 +237,6 @@ Useful options:
 - `--embedding_provider`, `--embedding_model`
 - `--top_k`
 - `--show_context`
-
-### Demo Placeholder (Step 4)
-<!-- Replace with your GIF path -->
-![run_rag demo](./docs/gifs/04-run_rag.gif)
 
 ## Project Structure
 
