@@ -136,8 +136,12 @@ Common options:
 - `--summary_max_workers`
 
 ### Populate Database Demo
-<!-- Replace with your GIF path -->
-![populate_database demo](./auxiliar/edited_gif/demo1_edited.webp)
+
+<p align="center">
+
+  <img src="./auxiliar/edited_gif/demo1_edited.webp" alt="populate_database  demo" width="60%" style="margin-right: 1%;" />
+
+</p>
 
 ## Step 2: populate_KG
 Extract and canonicalize graph relationships from the ingested docstore, then push to Neo4j.
@@ -201,7 +205,12 @@ Outputs retriever DBs (default):
 
 ### Enrich KG Demo
 <!-- Replace with your GIF path -->
-![enrich_KG demo](./auxiliar/edited_gif/demo4_edited.webp)
+<p align="center">
+
+  <img src="./auxiliar/edited_gif/demo4_edited.webp" alt="enrich_KG demo" width="60%" style="margin-right: 1%;" />
+
+</p>
+
 
 ## Step 4: run_rag
 Launch the GraphRAG CLI that combines document context + graph context.
