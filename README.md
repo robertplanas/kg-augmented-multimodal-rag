@@ -5,13 +5,16 @@
 ![Graph DB](https://img.shields.io/badge/GraphDB-Neo4j-black)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
-A local-first pipeline that combines:
-- Multimodal retrieval over text, tables, images, and code.
-- Knowledge graph extraction and canonicalization.
-- Community discovery in Neo4j (global + mid-level).
-- Graph-augmented answer generation with a CLI RAG interface.
+Build an end-to-end **KG-augmented Multimodal RAG pipeline** that turns raw technical documents into graph-grounded answers.
 
-The project processes documents (`.pdf`, `.ipynb`, `.py`), stores multimodal chunks in Chroma/LocalFileStore, writes entity relationships to Neo4j, enriches graph context through community summaries, and uses all contexts during retrieval and generation.
+### What It Delivers
+- **Multimodal retrieval** across text, tables, images, and code.
+- **Knowledge graph extraction + canonicalization** for cleaner, merged entities.
+- **Neo4j community discovery** at both global and mid-level structure.
+- **Graph-augmented generation** through an interactive CLI RAG interface.
+
+### End-to-End Flow
+`Documents (.pdf/.ipynb/.py) -> Multimodal chunking (Chroma + LocalFileStore) -> Entity graph in Neo4j -> Community summaries -> Unified retrieval + answer generation`
 
 ### RAG Demo
 <p align="center">
