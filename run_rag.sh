@@ -6,11 +6,11 @@ python run_rag.py \
   --mid_communities_db ./localdb/mid_communities \
   --global_communities_db ./localdb/global_communities \
   --embedding_provider ollama \
-  --embedding_model embeddinexiggemma:latest \
-  --rag_provider ollama \
-  --rag_model gemma4:e4b \
-  --graph_summary_provider ollama \
-  --graph_summary_model gemma4:e4b \
+  --embedding_model embeddinggemma:latest \
+  --rag_provider openai \
+  --rag_model gpt-5-nano \
+  --graph_summary_provider openai \
+  --graph_summary_model gpt-5-nano \
   --neo4j_uri bolt://localhost:7687 \
   --neo4j_user neo4j \
   --neo4j_database neo4j \

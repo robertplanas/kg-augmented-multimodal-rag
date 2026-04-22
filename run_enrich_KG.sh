@@ -17,7 +17,4 @@ python enrich_KG.py \
   --neo4j_database neo4j \
   --global_communities_db ./localdb/global_communities \
   --mid_communities_db ./localdb/mid_communities \
-  --node_db ./localdb/node_db \
-  "$@"
-
-# Optional flag:
+  --node_db ./localdb/node_db 
